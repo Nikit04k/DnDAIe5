@@ -1,14 +1,16 @@
 const { createServer } = require('http');
 const { parse } = require('url');
+const path = require('path');
 const next = require('next');
 const { WebSocketServer, WebSocket } = require('ws');
 const os = require('os');
 
-const dev = process.env.NODE_ENV !== 'production';
+const dev = process.env.NODE_ENV === 'development';
+const appDir = process.env.APP_DIR || path.resolve(__dirname);
 const hostname = '0.0.0.0';
 const port = parseInt(process.env.PORT || '3000', 10);
 
-const app = next({ dev, hostname, port });
+const app = next({ dev, dir: appDir, hostname, port });
 const handle = app.getRequestHandler();
 
 // Room state stored in-memory on the LAN Host Server

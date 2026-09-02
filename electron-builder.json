@@ -6,6 +6,7 @@
     "output": "dist",
     "buildResources": "build"
   },
+  "asar": false,
   "files": [
     "**/*",
     "!android/**/*",
