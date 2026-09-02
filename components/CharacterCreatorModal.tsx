@@ -54,6 +54,7 @@ import {
   CheckCircle2,
   Zap,
   Package,
+  X,
 } from 'lucide-react';
 import { playDiceRollSound, playCriticalHitSound } from '@/lib/diceSound';
 
@@ -67,6 +68,7 @@ type StatGenerationMode = 'point_buy' | 'standard_array';
 
 export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
   isOpen,
+  onClose,
   onStartCampaign,
 }) => {
   // Navigation section
@@ -313,7 +315,13 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
     setGold(Math.min(500, preset.gold || 25));
   };
 
+  const isPointBuyOverspent = statMode === 'point_buy' && pointsRemaining < 0;
+
   const handleLaunch = () => {
+    if (isPointBuyOverspent) {
+      return;
+    }
+
     const armorItemName = activeArmor && activeArmor.id !== 'none'
       ? `${activeArmor.nameRu.split(' (')[0]} (AC ${activeArmor.baseAc})`
       : 'Походная одежда';
@@ -371,8 +379,14 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-950/90 animate-fadeIn">
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-4xl max-h-[94vh] flex flex-col overflow-hidden shadow-2xl">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-950/90 backdrop-blur-sm animate-fadeIn"
+      onClick={() => { if (onClose) onClose(); }}
+    >
+      <div
+        className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-4xl max-h-[94vh] flex flex-col overflow-hidden shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Modal Header */}
         <div className="p-4 sm:p-5 border-b border-slate-800 bg-gradient-to-r from-slate-950 via-slate-900 to-slate-950 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -390,15 +404,27 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
           </div>
 
           {/* Quick Actions */}
-          <button
-            type="button"
-            onClick={handleClearAll}
-            className="px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-red-950/50 border border-slate-800 hover:border-red-800/60 text-xs text-slate-400 hover:text-red-300 transition flex items-center gap-1.5 font-medium"
-            title="Очистить все поля и начать с чистого листа"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Чистый лист</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleClearAll}
+              className="px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-red-950/50 border border-slate-800 hover:border-red-800/60 text-xs text-slate-400 hover:text-red-300 transition flex items-center gap-1.5 font-medium cursor-pointer"
+              title="Очистить все поля и начать с чистого листа"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Чистый лист</span>
+            </button>
+            {onClose && (
+              <button
+                type="button"
+                onClick={onClose}
+                className="p-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-slate-200 transition cursor-pointer"
+                title="Закрыть окно конструктора (Esc)"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Section Navigation Tabs */}
@@ -716,24 +742,44 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
 
                 {/* Sub-panels for each mode */}
                 {statMode === 'point_buy' && (
-                  <div className="flex items-center justify-between bg-slate-900/90 p-3 rounded-xl border border-slate-800">
-                    <div className="text-xs text-slate-300">
-                      Покупка характеристик (8–15). Нажимайте <strong className="text-amber-300">+</strong> и <strong className="text-amber-300">-</strong> для распределения очков:
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between bg-slate-900/90 p-3 rounded-xl border border-slate-800">
+                      <div className="text-xs text-slate-300">
+                        Покупка характеристик (8–15). Нажимайте <strong className="text-amber-300">+</strong> и <strong className="text-amber-300">-</strong> для распределения очков:
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-slate-400">Осталось очков:</span>
+                        <span
+                          className={`text-sm font-extrabold px-2.5 py-0.5 rounded-lg border font-mono ${
+                            pointsRemaining === 0
+                              ? 'bg-emerald-950/80 text-emerald-300 border-emerald-800'
+                              : pointsRemaining > 0
+                              ? 'bg-amber-950/80 text-amber-300 border-amber-800'
+                              : 'bg-red-950 text-red-200 border-red-500 shadow-md shadow-red-500/30 animate-pulse ring-1 ring-red-500/60'
+                          }`}
+                        >
+                          {pointsRemaining} / {POINT_BUY_TOTAL_BUDGET}
+                        </span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-slate-400">Осталось очков:</span>
-                      <span
-                        className={`text-sm font-extrabold px-2.5 py-0.5 rounded-lg border font-mono ${
-                          pointsRemaining === 0
-                            ? 'bg-emerald-950/80 text-emerald-300 border-emerald-800'
-                            : pointsRemaining > 0
-                            ? 'bg-amber-950/80 text-amber-300 border-amber-800'
-                            : 'bg-red-950/80 text-red-300 border-red-800'
-                        }`}
-                      >
-                        {pointsRemaining} / {POINT_BUY_TOTAL_BUDGET}
-                      </span>
-                    </div>
+
+                    {isPointBuyOverspent && (
+                      <div className="bg-red-950/80 border border-red-500/60 rounded-xl p-3 text-xs text-red-200 flex items-center justify-between shadow-lg">
+                        <div className="flex items-center gap-2">
+                          <span className="text-lg flex-shrink-0">⛔</span>
+                          <span>
+                            <strong>Перерасход очков Point Buy: {Math.abs(pointsRemaining)}!</strong> Вы превысили лимит 27 очков D&D 5e. Уменьшите характеристики, чтобы начать игру.
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setBaseStats({ str: 15, dex: 14, con: 13, wis: 12, cha: 10, int: 8 })}
+                          className="px-2.5 py-1 bg-red-900/80 hover:bg-red-800 text-red-100 rounded-lg text-[11px] font-bold border border-red-600 cursor-pointer flex-shrink-0 ml-2 shadow-sm transition"
+                        >
+                          Сбросить к 27
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -1152,9 +1198,16 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
           </div>
           <button
             onClick={handleLaunch}
-            className="w-full sm:w-auto px-8 py-3.5 bg-gradient-to-r from-amber-600 via-amber-500 to-amber-600 hover:from-amber-500 hover:to-amber-400 text-slate-950 font-cinzel font-extrabold text-sm sm:text-base rounded-xl shadow-lg shadow-amber-600/30 transition transform active:scale-95 cursor-pointer"
+            disabled={isPointBuyOverspent}
+            className={`w-full sm:w-auto px-8 py-3.5 font-cinzel font-extrabold text-sm sm:text-base rounded-xl shadow-lg transition transform active:scale-95 ${
+              isPointBuyOverspent
+                ? 'bg-slate-800 text-slate-500 border border-red-500/30 cursor-not-allowed opacity-75 shadow-none ring-1 ring-red-500/20'
+                : 'bg-gradient-to-r from-amber-600 via-amber-500 to-amber-600 hover:from-amber-500 hover:to-amber-400 text-slate-950 shadow-amber-600/30 cursor-pointer'
+            }`}
           >
-            Начать приключение по правилам D&D 5e! ⚔️
+            {isPointBuyOverspent
+              ? `⛔ Перерасход Point Buy (${pointsRemaining} очков)`
+              : 'Начать приключение по правилам D&D 5e! ⚔️'}
           </button>
         </div>
       </div>

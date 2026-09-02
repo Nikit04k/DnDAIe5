@@ -1696,6 +1696,7 @@ export default function DnDApp() {
 
       <CharacterCreatorModal
         isOpen={isCreatorOpen}
+        onClose={() => setIsCreatorOpen(false)}
         onStartCampaign={handleStartCampaign}
       />
 

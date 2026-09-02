@@ -165,8 +165,14 @@ export const LanMultiplayerModal: React.FC<LanMultiplayerModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-2 sm:p-6 overflow-y-auto animate-fadeIn">
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl max-h-[92dvh] overflow-hidden shadow-2xl flex flex-col relative my-auto">
+    <div
+      className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-2 sm:p-6 overflow-y-auto animate-fadeIn"
+      onClick={onClose}
+    >
+      <div
+        className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl max-h-[92dvh] overflow-hidden shadow-2xl flex flex-col relative my-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="px-4 py-3.5 sm:px-6 sm:py-5 border-b border-slate-800/80 bg-gradient-to-r from-amber-950/40 via-slate-900 to-slate-900 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5 sm:gap-3">
