@@ -242,6 +242,10 @@ export const ChatFeed: React.FC<ChatFeedProps> = ({
           ? extractNarrativeAndThought(msg.text, msg.thought)
           : { cleanText: msg.text, thought: undefined };
 
+        const senderName = msg.senderCharacterName || msg.senderName || playerName || 'Герой';
+        const senderClass = msg.senderClass || '';
+        const senderColor = msg.senderColor || '#38bdf8';
+
         return (
           <div
             key={msgId}
@@ -249,16 +253,28 @@ export const ChatFeed: React.FC<ChatFeedProps> = ({
           >
             {/* Sender Label & Timestamp */}
             <div className="flex items-center gap-2 mb-1.5 px-1">
-              <span className="text-[11px] font-bold tracking-wider uppercase flex items-center gap-1 text-slate-400">
+              <span className="text-[11px] font-bold tracking-wider uppercase flex items-center gap-1.5 text-slate-400">
                 {isDm ? (
                   <>
-                    <Sparkles className="w-3 h-3 text-amber-400" />
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
                     <span className="text-amber-400 font-cinzel">Dungeon Master</span>
                   </>
                 ) : (
                   <>
-                    <User className="w-3 h-3 text-cyan-400" />
-                    <span className="text-cyan-300">{playerName || 'Герой'}</span>
+                    <div
+                      style={{ backgroundColor: senderColor }}
+                      className="w-4 h-4 rounded-md text-slate-950 font-bold text-[9px] flex items-center justify-center shadow-sm"
+                    >
+                      {senderName.charAt(0).toUpperCase()}
+                    </div>
+                    <span style={{ color: senderColor }} className="font-semibold">
+                      {senderName}
+                    </span>
+                    {senderClass && (
+                      <span className="text-[10px] text-slate-500 font-normal">
+                        ({senderClass})
+                      </span>
+                    )}
                   </>
                 )}
               </span>
@@ -334,6 +350,26 @@ export const ChatFeed: React.FC<ChatFeedProps> = ({
 
                     {renderFormattedNarrative(cleanText)}
                     {renderStateUpdatePills(msg.stateUpdateApplied)}
+
+                    {/* Targeted Roll Waiting Card */}
+                    {msg.rollRequest && msg.rollRequest.needed && (
+                      <div className="mt-3 p-3 rounded-xl bg-amber-950/40 border border-amber-500/50 flex flex-wrap items-center justify-between gap-2.5 text-xs shadow-inner animate-pulse">
+                        <div className="flex items-center gap-2">
+                          <Dices className="w-4 h-4 text-amber-400 shrink-0 animate-spin" style={{ animationDuration: '4s' }} />
+                          <span className="text-amber-200">
+                            Мастер ожидает бросок:{' '}
+                            <strong className="text-amber-300">
+                              {msg.rollRequest.skill || msg.rollRequest.ability || 'D20'}
+                              {msg.rollRequest.dc ? ` (DC ${msg.rollRequest.dc})` : ''}
+                            </strong>{' '}
+                            от <strong className="text-cyan-300">«{msg.rollRequest.target_character_name || msg.waitingPlayerName || 'героя'}»</strong>
+                          </span>
+                        </div>
+                        <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                          ⏳ Ожидание броска
+                        </span>
+                      </div>
+                    )}
 
                     {/* DM Footer: Edge TTS Speaker & Atmospheric Date Badge */}
                     <div className="flex flex-wrap items-center justify-between gap-2 pt-3 mt-3 border-t border-slate-800/80 text-[11px] text-slate-500">

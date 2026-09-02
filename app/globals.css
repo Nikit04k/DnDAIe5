@@ -13,6 +13,9 @@
     background-color: var(--background);
     position: relative;
     min-height: 100vh;
+    min-height: 100dvh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
   /* GPU-accelerated static background: rasterized once into dedicated compositor layer, never repainted on scroll */
@@ -27,6 +30,29 @@
       radial-gradient(circle at 100% 100%, rgba(139, 92, 246, 0.03) 0%, transparent 40%);
     transform: translateZ(0);
   }
+}
+
+/* Touch responsiveness without tap delay */
+button, a, input, textarea, select {
+  touch-action: manipulation;
+}
+
+/* Mobile Safe-Area padding for iOS home indicator and notch */
+.pb-safe {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0.5rem));
+}
+
+.pt-safe {
+  padding-top: max(0.5rem, env(safe-area-inset-top, 0.5rem));
+}
+
+/* Hide scrollbar for sleek horizontal chip navigation */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
 /* Custom stylish fantasy scrollbars */

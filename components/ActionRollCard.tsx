@@ -185,9 +185,16 @@ export const ActionRollCard: React.FC<ActionRollCardProps> = ({
             <ShieldAlert className="w-5 h-5" />
           </div>
           <div>
-            <span className="text-[10px] uppercase font-bold tracking-widest text-amber-400 block">
-              Мастер запрашивает бросок кости
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] uppercase font-bold tracking-widest text-amber-400 block">
+                Мастер запрашивает бросок кости
+              </span>
+              {rollReq.target_character_name && (
+                <span className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.2 rounded bg-cyan-950/80 text-cyan-300 border border-cyan-700/60">
+                  🎯 {rollReq.target_character_name}
+                </span>
+              )}
+            </div>
             <h3 className="font-cinzel text-base sm:text-lg font-bold text-amber-100">
               {statOrSkillLabel}
             </h3>
@@ -195,7 +202,7 @@ export const ActionRollCard: React.FC<ActionRollCardProps> = ({
         </div>
 
         {rollReq.dc && (
-          <div className="bg-amber-500/10 border border-amber-500/30 px-3 py-1 rounded-xl text-center">
+          <div className="bg-amber-500/10 border border-amber-500/30 px-3 py-1 rounded-xl text-center flex-shrink-0">
             <span className="text-[9px] uppercase tracking-wider text-amber-400 font-bold block">Сложность</span>
             <span className="font-cinzel text-base font-extrabold text-amber-300">DC {rollReq.dc}</span>
           </div>

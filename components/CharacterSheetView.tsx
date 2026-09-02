@@ -382,7 +382,7 @@ export const CharacterSheetView: React.FC<CharacterSheetProps> = ({
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            Надето ({equippedList.length})
+            Вещи ({equippedList.length + backpackList.length})
           </button>
           <button
             onClick={() => setActiveTab('lore')}

@@ -299,6 +299,20 @@ export function resetGeminiUsageStats(): GeminiUsageStats {
   return fresh;
 }
 
+// ================= OPENROUTER STORAGE =================
+
+export function getStoredUseOpenRouter(): boolean {
+  if (typeof window === 'undefined') return true;
+  const val = localStorage.getItem('dnd_use_openrouter');
+  if (val === null) return true;
+  return val === 'true';
+}
+
+export function setStoredUseOpenRouter(active: boolean): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem('dnd_use_openrouter', active ? 'true' : 'false');
+}
+
 // ================= LM STUDIO (LOCAL AI) STORAGE =================
 
 export function getStoredUseLmStudio(): boolean {

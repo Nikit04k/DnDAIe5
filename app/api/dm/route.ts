@@ -8,7 +8,8 @@ function enrichStateUpdateFromNarrative(
   currentCharacter?: CharacterSheet,
   actionText: string = '',
   currentDay: number = 1,
-  currentMinutes: number = 480
+  currentMinutes: number = 480,
+  partyPlayers: Array<{ id: string; name: string; character: CharacterSheet }> = []
 ): DmResponse {
   if (!parsed.state_update) {
     parsed.state_update = {
@@ -118,6 +119,13 @@ function enrichStateUpdateFromNarrative(
         }
       }
     }
+  }
+
+  // Determine acting player name from actionText (e.g. "[Игрок: Воин Торгрим]: ..." or "[Торгрим]: ...")
+  let actionAuthorName = '';
+  const authorMatch = actionText.match(/\[(?:Игрок: )?([^\]\n:]+)(?::|\s*\])/i);
+  if (authorMatch && authorMatch[1]) {
+    actionAuthorName = authorMatch[1].replace(/^(?:Воин|Маг|Плут|Жрец|Паладин|Следопыт|Варвар|Бард|Друид|Колдун|Чародей|Монах)\s+/i, '').trim();
   }
 
   // 5. Extract requires_roll if needed is false but action or narrative implies an attempt/skill check
@@ -325,7 +333,38 @@ function enrichStateUpdateFromNarrative(
     }
   }
 
-  // 6. High Precision Adaptive Time parser
+  // 6. Targeted Multiplayer Roll Resolution: Ensure target_character_name & target_character_id are filled
+  if (parsed.requires_roll && parsed.requires_roll.needed) {
+    if (!parsed.requires_roll.target_character_name || parsed.requires_roll.target_character_name.trim().length === 0) {
+      // If action had an explicit author, assign to them
+      if (actionAuthorName) {
+        parsed.requires_roll.target_character_name = actionAuthorName;
+      } else if (currentCharacter?.name) {
+        parsed.requires_roll.target_character_name = currentCharacter.name;
+      } else if (partyPlayers.length > 0) {
+        parsed.requires_roll.target_character_name = partyPlayers[0].name || partyPlayers[0].character?.name || 'Герой';
+      }
+    }
+
+    // Match with party player to set target_character_id
+    if (parsed.requires_roll.target_character_name) {
+      const targetNameLower = parsed.requires_roll.target_character_name.toLowerCase().trim();
+      const matchedPlayer = partyPlayers.find(
+        (p) =>
+          p.name.toLowerCase() === targetNameLower ||
+          p.character?.name?.toLowerCase() === targetNameLower ||
+          targetNameLower.includes(p.name.toLowerCase()) ||
+          (p.character?.name && targetNameLower.includes(p.character.name.toLowerCase()))
+      );
+
+      if (matchedPlayer) {
+        parsed.requires_roll.target_character_id = matchedPlayer.id;
+        parsed.requires_roll.target_character_name = matchedPlayer.name || matchedPlayer.character?.name;
+      }
+    }
+  }
+
+  // 7. High Precision Adaptive Time parser
   const timeResult = parseAndAdvanceTime(
     currentDay,
     currentMinutes,
@@ -348,7 +387,8 @@ function parseJsonResponse(
   currentCharacter?: CharacterSheet,
   actionText: string = '',
   currentDay: number = 1,
-  currentMinutes: number = 480
+  currentMinutes: number = 480,
+  partyPlayers: Array<{ id: string; name: string; character: CharacterSheet }> = []
 ): DmResponse {
   try {
     let clean = raw.trim();
@@ -366,7 +406,7 @@ function parseJsonResponse(
     if (!parsed.narrative && parsed.text) {
       parsed.narrative = parsed.text;
     }
-    return enrichStateUpdateFromNarrative(parsed as DmResponse, raw, currentCharacter, actionText, currentDay, currentMinutes);
+    return enrichStateUpdateFromNarrative(parsed as DmResponse, raw, currentCharacter, actionText, currentDay, currentMinutes, partyPlayers);
   } catch (err) {
     const fallbackObj: DmResponse = {
       narrative: raw,
@@ -381,7 +421,7 @@ function parseJsonResponse(
         time_passed_minutes: 15,
       },
     };
-    return enrichStateUpdateFromNarrative(fallbackObj, raw, currentCharacter, actionText, currentDay, currentMinutes);
+    return enrichStateUpdateFromNarrative(fallbackObj, raw, currentCharacter, actionText, currentDay, currentMinutes, partyPlayers);
   }
 }
 
@@ -392,7 +432,8 @@ function extractThinkingAndJson(
   currentCharacter?: CharacterSheet,
   actionText: string = '',
   currentDay: number = 1,
-  currentMinutes: number = 480
+  currentMinutes: number = 480,
+  partyPlayers: Array<{ id: string; name: string; character: CharacterSheet }> = []
 ): DmResponse {
   let thought = rawReasoning || '';
   let content = raw || '';
@@ -416,7 +457,7 @@ function extractThinkingAndJson(
   }
   content = content.replace(thoughtBlockRegex, '').trim();
 
-  const parsed = parseJsonResponse(content, currentCharacter, actionText, currentDay, currentMinutes);
+  const parsed = parseJsonResponse(content, currentCharacter, actionText, currentDay, currentMinutes, partyPlayers);
   if (thought && thought.trim().length > 0) {
     parsed.thought = thought.trim();
   }
@@ -443,6 +484,7 @@ export async function POST(req: NextRequest) {
       world = {} as WorldSettings,
       history = [] as ChatMessage[],
       action = '',
+      partyPlayers = [] as Array<{ id: string; name: string; character: CharacterSheet; isHost?: boolean; color?: string }>,
       partyCompanions = [] as PartyCompanion[],
       journalEntries = [],
       lorebookEntries = [] as LorebookEntry[],
@@ -467,6 +509,7 @@ export async function POST(req: NextRequest) {
       world: WorldSettings;
       history: ChatMessage[];
       action?: string;
+      partyPlayers?: Array<{ id: string; name: string; character: CharacterSheet; isHost?: boolean; color?: string }>;
       partyCompanions?: PartyCompanion[];
       journalEntries?: Array<{ id: string; title: string; text: string; type: string }>;
       lorebookEntries?: LorebookEntry[];
@@ -479,6 +522,7 @@ export async function POST(req: NextRequest) {
       modelName?: string;
       baseUrl?: string;
       customPrompt?: string;
+      useOpenRouter?: boolean;
       useGemini?: boolean;
       geminiApiKey?: string;
       geminiModel?: string;
@@ -488,6 +532,7 @@ export async function POST(req: NextRequest) {
       lmStudioApiKey?: string;
     } = body;
 
+    const isOpenRouterActive = body.useOpenRouter !== false;
     const isLmStudioActive = Boolean(useLmStudio);
     const lmStudioUrl = userLmStudioUrl || 'http://localhost:1234/v1';
     const lmStudioModel = userLmStudioModel || '';
@@ -556,14 +601,33 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 2. Build Party Companions Roster
+    // 2. Build Live Party Roster (LAN Multiplayer Group)
+    let partyRosterPrompt = '';
+    if (partyPlayers && partyPlayers.length > 0) {
+      partyRosterPrompt = `\n[👥 ОТРЯД ЖИВЫХ ИГРОКОВ (PARTY ROSTER - ${partyPlayers.length} УЧАСТНИКОВ)]:\n` +
+        partyPlayers.map((p, idx) => {
+          const c = p.character || {};
+          const s = c.stats || { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };
+          const fmtM = (val: number) => {
+            const m = Math.floor((val - 10) / 2);
+            return m >= 0 ? `+${m}` : `${m}`;
+          };
+          const saves = (c.savingThrowProficiencies || []).map((sv) => sv.toUpperCase()).join(', ') || 'Базовые';
+          const skills = (c.skillProficiencies || []).join(', ') || 'Базовые';
+          const pEquipped = c.equippedItems && c.equippedItems.length > 0 ? c.equippedItems.join(', ') : 'Базовое снаряжение';
+          const pInv = c.inventory && c.inventory.length > 0 ? c.inventory.join(', ') : 'Пусто';
+          return `${idx + 1}. ПЕРСОНАЖ: "${p.name || c.name || 'Герой'}" (ID: "${p.id}") | Класс: ${c.class || 'Воин'} ${c.level || 1} ур. (${c.race || 'Человек'}) | HP: ${c.currentHp || 10}/${c.maxHp || 10}, AC: ${c.ac || 10} | СИЛ ${s.str} (${fmtM(s.str)}), ЛОВ ${s.dex} (${fmtM(s.dex)}), ТЕЛ ${s.con} (${fmtM(s.con)}), ИНТ ${s.int} (${fmtM(s.int)}), МУД ${s.wis} (${fmtM(s.wis)}), ХАР ${s.cha} (${fmtM(s.cha)}) | Спасброски: ${saves} | Навыки: ${skills} | 🛡️ Надето: [${pEquipped}] | 🎒 Инвентарь: [${pInv}] | 💰 Золото: ${c.gold || 0} gp`;
+        }).join('\n');
+    }
+
+    // 3. Build Party Companions Roster
     let companionsPrompt = '';
     if (partyCompanions && partyCompanions.length > 0) {
       companionsPrompt = `\n[СПУТНИКИ И ОТРЯД ГЕРОЯ (${partyCompanions.length})]:\n` +
         partyCompanions.map((c) => `- ${c.name} (${c.role}): Отношение: ${c.affinity || 'friendly'} | Связь: "${c.relationship}" | HP: ${c.hp}/${c.maxHp} | AC: ${c.ac} | Стат: ${c.mainStat} | Способности: ${c.specialAbilities} | Характер: ${c.personality} | Статус: ${c.status}`).join('\n');
     }
 
-    // 3. Build Persona & Character Sheet
+    // 4. Build Persona & Primary Character Sheet
     const equippedList = character.equippedItems && character.equippedItems.length > 0
       ? character.equippedItems.join(', ')
       : 'Базовое оружие и одежда';
@@ -596,7 +660,7 @@ export async function POST(req: NextRequest) {
       ? character.skillProficiencies.join(', ')
       : 'Базовые';
 
-    const charDetails = `[ЛИСТ ПЕРСОНАЖА И ПЕРСОНА ({{user}})]:
+    const charDetails = `[ЛИСТ ПЕРСОНАЖА (ХОСТ / {{user}})]:
 - Имя: ${character.name || 'Герой'}
 - Класс: ${character.class || 'Воин'} (Уровень ${character.level || 1}${character.subclass ? `, ${character.subclass}` : ''})
 - Раса: ${character.race || 'Человек'}${character.background ? ` | Предыстория: ${character.background}` : ''}
@@ -613,55 +677,63 @@ ${character.backstory || character.bio ? `- Предыстория: ${character.
 - 🛡️ НАДЕТОЕ СНАРЯЖЕНИЕ (Оружие в руках, надетая броня, щит): ${equippedList}
 - 🎒 РЮКЗАК И РАСХОДНЫЕ ПРЕДМЕТЫ (Зелья, свитки, припасы, не надетое): ${backpackList}`;
 
-    // 4. Master Prompt with Strict Russian Language & Hardcore Memory Continuity
-    const systemPrompt = `ТЫ — {{char}}, ОПЫТНЫЙ DUNGEON MASTER ДЛЯ ОДИНОЧНОЙ РОЛЕВОЙ ИГРЫ D&D 5e (DUNGEONS & DRAGONS).
-Твоя цель — вести глубокую, атмосферную, последовательную песочницу для игрока ({{user}}), обладая АБСОЛЮТНОЙ ПАМЯТЬЮ обо всех событиях, решениях, деталях сюжета, времени суток, спутниках и NPC.
+    // 5. Master Prompt with Strict Russian Language & Multiplayer Rules
+    const systemPrompt = `ТЫ — {{char}}, ОПЫТНЫЙ DUNGEON MASTER ДЛЯ РОЛЕВОЙ ИГРЫ D&D 5e (DUNGEONS & DRAGONS) В РЕЖИМЕ ЛОКАЛЬНОГО МУЛЬТИПЛЕЕРА И СОЛО.
+Твоя цель — вести глубокую, атмосферную, последовательную песочницу для отряда игроков, обладая АБСОЛЮТНОЙ ПАМЯТЬЮ обо всех событиях, решениях, деталях сюжета, времени суток, спутниках и NPC.
 
 [🇷🇺 КАТЕГОРИЧЕСКИЙ ЯЗЫКОВОЙ ЗАКОН]:
 ВЕСЬ ТВОЙ ОТВЕТ ДОЛЖЕН БЫТЬ СТРОГО НА РУССКОМ ЯЗЫКЕ!
 Все описания локаций, мысли, прямая речь NPC, варианты действий и статус-блок генерируются исключительно на чистом, богатом русском языке. Никаких фраз на английском или других языках!
 
+[🎒 ЖЕСТКИЙ ЗАКОН ИНВЕНТАРЯ И АНТИ-ЧИТ (STRICT INVENTORY LOCK)]:
+1. АБСОЛЮТНЫЙ ЗАПРЕТ НА ПРЕДМЕТЫ ИЗ ВОЗДУХА:
+   Персонаж игрока (и любой член отряда) может использовать, доставать, пить, надевать, бросать, читать или применять ТОЛЬКО те предметы, которые ПРЯМО ПЕРЕЧИСЛЕНЫ в его списке «🛡️ НАДЕТОЕ СНАРЯЖЕНИЕ» или «🎒 РЮКЗАК И РАСХОДНЫЕ ПРЕДМЕТЫ»!
+2. ОТКАЗ И РЕАКЦИЯ НА ПОПЫТКУ ВЗЯТЬ НЕСУЩЕСТВУЮЩИЙ ПРЕДМЕТ:
+   Если игрок в тексте действия утверждает, что он достает, пьет, использует, зажигает, читает или надевает предмет, которого НЕТ в его инвентаре/рюкзаке (например: пишет «достаю зелье невидимости/лечения», «вынимаю свиток огня», «достаю веревку с крюком», «надеваю кольцо невидимости», «беру святую воду», а этого предмета НЕТ в его списке инвентаря):
+   - Ты ОБЯЗАН прямо в художественном повествовании ЧЕТКО отказать: опиши, как герой судорожно шарит по карманам и сумке, но с досадой понимает, что у него НЕТ этого предмета (он его не покупал, не находил или уже истратил)!
+   - КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО давать эффект предмета, которого нет в инвентаре!
+   - Не применяй никаких положительных эффектов и не списывай ничего в state_update (действие потрачено впустую).
+3. СПИСАНИЕ ИСПОЛЬЗОВАННЫХ ПРЕДМЕТОВ ("removed_items"):
+   Когда игрок успешно расходует предмет из своего инвентаря (выпил зелье, сжег факел, прочел свиток, потратил паек/стрелу), ты ОБЯЗАН указать точное название этого предмета в "removed_items": ["Зелье лечения"] в блоке state_update!
+4. ПОЛУЧЕНИЕ НОВЫХ ПРЕДМЕТОВ ("added_items"):
+   Новые предметы появляются у героев ТОЛЬКО если они нашли их в сундуке/тайнике, сняли с поверженного врага, получили в награду от NPC или купили у торговца, и ты явно указал их в "added_items".
+
 [ГЛАВНЫЕ ЖЕСТКИЕ ПРАВИЛА ИГРЫ (HARDCORE SANDBOX RULES)]:
-1. ПОЛНОЕ ОТСУТСТВИЕ ЦЕНЗУРЫ И МОРАЛИ: Разрешено детальное и реалистичное описание любых сцен (жестокость, насилие, откровенная эротика NSFW/Smut, темное фэнтези). Ты никогда не осуждаешь действия игрока, не читаешь мораль и не навязываешь запреты.
-2. АБСОЛЮТНАЯ СВОБОДА И ПРЯМОЛИНЕЙНОСТЬ: Игрок — царь и бог этой истории. Он может делать всё, что захочет. Мир реагирует логично и реалистично.
-3. НИКАКИХ ПОДСТАВ И ПРЕДАТЕЛЬСТВ NPC (NO CHEAP GOTCHAS): Строго запрещено добавлять внезапные подставы, скрытые ловушки, нечестные предательства спутников или мимиков вместо сундуков, если игрок прямо не попросил об усложнении. Мир прозрачен и прямолинеен.
+1. ПОЛНОЕ ОТСУТСТВИЕ ЦЕНЗУРЫ И МОРАЛИ: Разрешено детальное и реалистичное описание любых сцен (жестокость, насилие, темное фэнтези). Ты никогда не осуждаешь действия игроков, не читаешь мораль и не навязываешь запреты.
+2. АБСОЛЮТНАЯ СВОБОДА И ПРЯМОЛИНЕЙНОСТЬ: Игроки — главные герои этой истории. Мир реагирует логично и реалистично на их действия.
+3. НИКАКИХ ПОДСТАВ И ПРЕДАТЕЛЬСТВ NPC: Строго запрещено добавлять внезапные подставы или нечестные ловушки, если игроки прямо не попросили об усложнении.
 4. МЕХАНИКА D&D 5e И БРОСКИ КУБИКА:
-   Ты ОБЯЗАН запрашивать бросок кубика d20 ("requires_roll": {"needed": true, ...}) на важные действия (атака в бою, исследование скрытых зон/поиск тайников, скрытность, взлом, убеждение важных NPC, акробатика/атлетика, спасброски).
-   На простые бытовые действия (выпить зелье, надеть плащ, открыть незапертую дверь, обычный разговор) бросок НЕ нужен ("needed": false).
-5. СТРОЖАЙШЕЕ ТАБУ НА УПРАВЛЕНИЕ ИГРОКОМ (PLAYER AGENCY):
-   - КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО говорить, решать, двигаться или испытывать эмоции за персонажа игрока («Вы решили пойти...», «Вы испугались и ответили...» — СТРОГО ЗАПРЕЩЕНО!).
-   - Твоя задача — описать окружение, реакцию мира, действия врагов и слова NPC, а затем ОСТАНОВИТЬСЯ и ждать решения игрока.
+   Ты ОБЯЗАН запрашивать бросок кубика d20 ("requires_roll": {"needed": true, ...}) на важные действия с неопределенным исходом (атака в бою, исследование скрытых зон/поиск тайников, скрытность, взлом, убеждение важных NPC, акробатика/атлетика, спасброски).
+   На простые бытовые действия (выпить зелье из инвентаря, надеть свой плащ, открыть незапертую дверь, обычный разговор) бросок НЕ нужен ("needed": false).
+5. СТРОЖАЙШЕЕ ТАБУ НА УПРАВЛЕНИЕ ИГРОКАМИ (PLAYER AGENCY):
+   - КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО говорить, решать, двигаться или испытывать эмоции за персонажей игроков («Вы решили пойти...», «Торгрим испугался и ответил...» — СТРОГО ЗАПРЕЩЕНО!).
+   - Твоя задача — описать окружение, реакцию мира, действия врагов и слова NPC, а затем ОСТАНОВИТЬСЯ и ждать решений игроков.
 6. СТРОЖАЙШИЙ ЗАПРЕТ НА СПИСКИ «ВАРИАНТЫ ДЕЙСТВИЙ»:
    - КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО писать в конце текста любые списки вариантов: «Варианты действий:», «Возможные действия:», «Что вы будете делать?», «1. ... 2. ... 3. ...».
-   - Игрок САМ формулирует свои действия в свободной форме. Твой ответ должен заканчиваться живым художественным описанием сцены или фразой NPC БЕЗ каких-либо вариантов выбора!
+   - Игроки САМИ формулируют свои действия в свободной форме. Твой ответ должен заканчиваться живым художественным описанием сцены или фразой NPC БЕЗ каких-либо вариантов выбора!
 
-[🎲 ПРАВИЛА ЗАПРОСА БРОСКОВ КУБИКА D20 (DICE ROLLS PROTOCOL)]:
-Когда игрок совершает действие с неопределенным исходом, проверкой навыка или риском (особенно со словами «попробую...», «пытаюсь...», «хочу сделать...»), ты ОБЯЗАН потребовать бросок кубика d20 в объекте "requires_roll" {"needed": true, ...}:
-1. ВЫЖИВАНИЕ В ДИКОЙ ПРИРОДЕ (Survival WIS): Разведение костра (трением/палочками или в непогоду), постройка шалаша/укрытия из веток, охота, выслеживание дичи/следов, поиск пропитания/воды в глуши, ориентирование:
-   "needed": true, "roll_type": "skill_check", "skill": "Survival", "ability": "WIS", "dc": 11-14, "reason": "Проверка Выживания (Survival) для обустройства лагеря и разведения огня".
-2. ИССЛЕДОВАНИЕ МЕСТНОСТИ, ПОИСК ТАЙНИКОВ, СЛЕДОВ (Perception WIS / Investigation INT): "needed": true, "roll_type": "skill_check", "skill": "Perception"|"Investigation", "ability": "WIS"|"INT", "dc": 12-15.
-3. СКРЫТНОСТЬ И ПРОНИКНОВЕНИЕ (Stealth DEX): "needed": true, "roll_type": "skill_check", "skill": "Stealth", "ability": "DEX", "dc": 13-16.
-4. ВЗЛОМ ЗАМКОВ И КАРМАННАЯ КРАЖА (Sleight of Hand DEX): "needed": true, "roll_type": "skill_check", "skill": "Sleight of Hand", "ability": "DEX", "dc": 14-16.
-5. УБЕЖДЕНИЕ, ОБМАН, ЗАПУГИВАНИЕ, ПРОНИЦАТЕЛЬНОСТЬ (Persuasion / Deception / Intimidation CHA, Insight WIS): "needed": true, "roll_type": "skill_check", "ability": "CHA"|"WIS", "dc": 12-16.
-6. АТЛЕТИКА И АКРОБАТИКА (Athletics STR / Acrobatics DEX): Прыжки через пропасть, выбивание двери, карабканье по скале: "needed": true, "roll_type": "skill_check", "ability": "STR"|"DEX", "dc": 13-15.
-7. ПРИРОДА И МЕДИЦИНА (Nature INT / Medicine WIS): Сбор целебных трав, распознавание яда, перевязка ран: "needed": true, "roll_type": "skill_check", "ability": "INT"|"WIS", "dc": 12-14.
-8. АТАКА В БОЮ: "needed": true, "roll_type": "attack_roll", "ability": "STR"|"DEX", "dc": 12-16 (КБ цели), "reason": "Бросок атаки по врагу".
-9. СПАСБРОСОК ОТ ЛОВУШЕК, ПАДЕНИЯ ИЛИ МАГИИ: "needed": true, "roll_type": "saving_throw", "ability": "DEX"|"CON"|"WIS", "dc": 13-16.
+[🎲 МУЛЬТИПЛЕЕР И ТАРГЕТИРОВАННЫЕ БРОСКИ КУБИКОВ (TARGETED DICE ROLLS)]:
+В игре участвует отряд игроков. Когда требуется бросок кубика ("requires_roll": {"needed": true, ...}):
+1. Ты ОБЯЗАН указать КОНКРЕТНОГО персонажа из списка [👥 ОТРЯД ЖИВЫХ ИГРОКОВ], который должен совершить бросок:
+   - "target_character_name": "Имя персонажа" (например: "Торгрим")
+   - "target_character_id": "ID игрока" (например: "player_1" или "client_...")
+2. Если действие совершил конкретный игрок (например "[Игрок: Воин Торгрим]: я выбиваю дверь"), запрашивай бросок именно от этого персонажа!
+3. Если опасность угрожает конкретному герою или всей группе (спасбросок от заклинания/ловушки), укажи имя целевого персонажа.
+4. В поле "reason" на русском языке подробно опиши причину броска (например: "Проверка Атлетики (STR) для взлома двери").
 
 [⚠️ СТРОГОЕ ПРАВИЛО НЕЗАВЕРШЕННОГО ДЕЙСТВИЯ]:
 Когда ты требуешь бросок кубика ("needed": true):
-- Опиши ТОЛЬКО подготовку к действию и нарастающее напряжение (например: как герой собирает хворост и начинает усердно тереть сухую палочку о брусок).
-- КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО писать, что действие уже успешно завершилось (костер вспыхнул) или провалилось ДО того, как игрок бросил кубик!
+- Опиши ТОЛЬКО подготовку к действию и нарастающее напряжение (например: как Торгрим разбегается и бьет плечом в засов).
+- КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО писать, что действие уже успешно завершилось (дверь сломалась) или провалилось ДО того, как игрок бросил кубик!
 - Остановись и жди броска игрока — исход будет определен следующим сообщением по результату выпавшего D20!
 
 [🧠 ЖЕСТКИЙ ПРОТОКОЛ ПАМЯТИ, ХРОНОЛОГИИ И NPC (MEMORY CONTINUITY PROTOCOL)]:
 1. АБСОЛЮТНАЯ ПАМЯТЬ ОБ NPC И СПУТНИКАХ:
-   - Все когда-либо встреченные спутники, торговцы, стражники, враги и союзники имеют постоянные имена, расу, пол, внешность, статус, характер и отношение к герою.
-   - Запрещено забывать NPC, путать их имена или менять их прошлое отношение к игроку.
+   - Все когда-либо встреченные NPC и спутники сохраняют имена, расу, характер и отношение к героям.
 2. СЮЖЕТНЫЙ КАНОН:
-   - Все принятые решения, раскрытые тайны, выполненные и текущие квесты, обещания и победы являются нерушимой истиной. Никогда не противоречь прошлым событиям истории.
+   - Все принятые решения, выполненные квесты и победы являются нерушимой истиной. Никогда не противоречь прошлым событиям истории.
 3. ИНВЕНТАРЬ И ЗОЛОТО:
-   - Строго учитывай имеющиеся у героя предметы, артефакты, потраченные зелья, стрелы, золото и состояние спутников.
+   - Строго учитывай найденные и потраченные предметы. Никогда не позволяй доставать предметы из ниоткуда.
 
 ${worldTimeBlock}
 
@@ -671,6 +743,7 @@ ${world.customRules && world.customRules.trim() ? `[ОСОБЫЕ ПРАВИЛА 
 ${userCustomPrompt && userCustomPrompt.trim() ? `[ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ]:\n${userCustomPrompt.trim()}\n` : ''}
 ${storySummary && storySummary.trim() ? `[ПРЕДЫДУЩАЯ ХРОНИКА СЮЖЕТА (ПАМЯТЬ)]:\n${storySummary.trim()}\n` : ''}
 ${activeLorebookSnippets.length > 0 ? `[АКТИВНЫЕ ЗАПИСИ ЛОРБУКА И ПАМЯТИ]:\n${activeLorebookSnippets.join('\n\n')}\n` : ''}
+${partyRosterPrompt}
 ${companionsPrompt}
 
 ${charDetails}
@@ -681,26 +754,28 @@ ${charDetails}
   "narrative": "Чистый художественный и атмосферный текст ответа Dungeon Master на русском языке в формате Markdown (СТРОГО БЕЗ служебных блоков и СТРОГО БЕЗ списков вариантов действий, только чистое повествование).",
   "requires_roll": {
     "needed": true/false,
+    "target_character_name": "Торгрим",
+    "target_character_id": "player_id",
     "roll_type": "skill_check"|"saving_throw"|"attack_roll"|"flat_ability",
     "ability": "STR"|"DEX"|"CON"|"INT"|"WIS"|"CHA",
     "skill": "Perception"|"Athletics"|"Stealth"|...,
-    "dc": 12,
-    "reason": "Зачем нужен бросок"
+    "dc": 14,
+    "reason": "Проверка Атлетики (STR) для взлома двери"
   },
   "state_update": {
-    "hp_change": -4, // ОБЯЗАТЕЛЬНО: отрицательное число при уроне (например -4), положительное при лечении (+8), или 0
-    "gold_change": 15, // ОБЯЗАТЕЛЬНО: изменение золота (+25, -10 или 0)
-    "added_items": ["Зелье лечения (2d4+2)"], // ОБЯЗАТЕЛЬНО: новые найденные/полученные предметы
-    "removed_items": [], // ОБЯЗАТЕЛЬНО: использованные или потерянные предметы
+    "hp_change": -4,
+    "gold_change": 15,
+    "added_items": ["Зелье лечения (2d4+2)"],
+    "removed_items": [],
     "location_name": "Название текущей локации",
-    "time_passed_minutes": 355, // ОБЯЗАТЕЛЬНО: сколько минут прошло с предыдущего действия
-    "new_time": "18:00" // ОБЯЗАТЕЛЬНО: новое точное время на часах (например "18:00", "День 1 • 18:00", "08:00")
+    "time_passed_minutes": 15,
+    "new_time": "18:00"
   },
   "nearby_npcs": [
     {
       "name": "Имя NPC рядом",
       "role": "Роль/Класс",
-      "relationship": "Отношение к герою",
+      "relationship": "Отношение к героям",
       "affinity": "devoted"|"friendly"|"neutral"|"distrustful",
       "hp": 16,
       "maxHp": 16,
@@ -713,19 +788,11 @@ ${charDetails}
 }
 
 [⚡ ПРАВИЛА ОБНОВЛЕНИЯ ЛИСТА ПЕРСОНАЖА И ВРЕМЕНИ В STATE_UPDATE]:
-1. АДАПТИВНОЕ ИГРОВОЕ ВРЕМЯ ("time_passed_minutes" и "new_time"):
-   Ты ОБЯЗАН управлять часами и минутами мира!
-   - ОЖИДАНИЕ / ПЕРЕМОТКА: Когда игрок ждет до определенного часа (например «хочу полежать до 6 вечера», «жду до 18:00», «отдыхаю до заката», «жду утра»):
-     * Всегда устанавливай точное новое время: "new_time": "18:00" и рассчитывай точное число минут "time_passed_minutes": 355!
-   - ПУТЕШЕСТВИЯ И ДОРОГА: рассчитывай точное время! (например, если дорога заняла 3 часа — "time_passed_minutes": 180; если 10 часов — "time_passed_minutes": 600; переход в 1 день — "time_passed_minutes": 1440).
-   - КОРОТКИЙ ОТДЫХ: "time_passed_minutes": 60 (1 час).
-   - ДЛИТЕЛЬНЫЙ ОТДЫХ (сон в таверне/лагере): "time_passed_minutes": 480 (8 часов), "new_time": "08:00".
-   - ОБЫЧНОЕ ДЕЙСТВИЕ / реплика / раунд боя: 15 минут ("time_passed_minutes": 15).
-2. УРОН И ЛЕЧЕНИЕ: Когда герой получает урон в бою/ловушке, ВСЕГДА пиши в "hp_change" отрицательное число (например: "hp_change": -6). При лечении — положительное ("hp_change": 8).
-3. ПРЕДМЕТЫ: Когда герой находит лут, трофеи, зелья или оружие, ВСЕГДА добавляй их названия в "added_items" (например: "added_items": ["Зелье лечения", "Древний меч"]). При трате предмета — в "removed_items".
-4. ЗОЛОТО: За победы, выполнение квестов или грабеж ВСЕГДА начисляй золото в "gold_change" (например: "gold_change": 25).`;
+1. АДАПТИВНОЕ ИГРОВОЕ ВРЕМЯ ("time_passed_minutes" и "new_time"): Управляй ходом часов и суток мира.
+2. УРОН И ЛЕЧЕНИЕ: Отрицательное число при уроне (например: "hp_change": -6), положительное при лечении ("hp_change": 8).
+3. ПРЕДМЕТЫ И ЗОЛОТО: Добавляй лут в "added_items", расходники в "removed_items", золото в "gold_change".`;
 
-    // 5. Build chat messages payload with depth anchor
+    // 6. Build chat messages payload with depth anchor
     const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
       { role: 'system', content: systemPrompt },
     ];
@@ -740,19 +807,19 @@ ${charDetails}
     }
 
     // Depth Anchor right before user action
-    const depthAnchor = `[СИСТЕМНЫЙ ЯКОРЬ ПАМЯТИ: Ты — Dungeon Master. Игровое время: ${formattedClock} (${timeOfDayDesc}). Пиши СТРОГО на русском языке. Строго соблюдай непрерывность сюжета, учитывай освещение и время суток, помни всех NPC, спутников, инвентарь и решения {{user}}. При уроне, получении предметов или затратах времени ОБЯЗАТЕЛЬНО заполняй state_update.]`;
+    const depthAnchor = `[СИСТЕМНЫЙ ЯКОРЬ ПАМЯТИ: Ты — Dungeon Master. Игровое время: ${formattedClock} (${timeOfDayDesc}). Пиши СТРОГО на русском языке. СТРОГИЙ ЗАПРЕТ ПРЕДМЕТОВ ИЗ ВОЗДУХА: игрок может использовать ТОЛЬКО то, что есть в его инвентаре/снаряжении. Если он пытается достать/использовать предмет не из инвентаря — ОТКАЖИ (персонаж понимает, что у него этого нет). При расходе предметов указывай их в removed_items. При необходимости броска укажи целевого персонажа в requires_roll.]`;
 
     if (action && action.trim().length > 0) {
       messages.push({
         role: 'user',
-        content: `${depthAnchor}\n\n[Действие игрока]: ${action.trim()}`,
+        content: `${depthAnchor}\n\n[Действие]: ${action.trim()}`,
       });
     } else if (messages.length === 1) {
       messages.push({
         role: 'user',
         content: world.startingScene && world.startingScene.trim()
           ? `${depthAnchor}\n\nНачни кампанию. Стартовая завязка:\n${world.startingScene.trim()}`
-          : `${depthAnchor}\n\nНачни приключение и опиши стартовую сцену на русском языке, учитывая время суток (${formattedClock}).`,
+          : `${depthAnchor}\n\nНачни приключение и опиши стартовую сцену на русском языке для отряда, учитывая время суток (${formattedClock}).`,
       });
     }
 
@@ -953,8 +1020,8 @@ ${charDetails}
       }
     }
 
-    // 1. Secondary Provider: OpenRouter Cascade (if Gemini not active or failed)
-    if (!successfulContent) {
+    // 2. OpenRouter Cascade (if enabled and higher-priority providers were not active or failed)
+    if (!successfulContent && isOpenRouterActive) {
       for (const currentModel of uniqueModels) {
         try {
           const endpointUrl = `${resolvedBaseUrl}/chat/completions`;
@@ -999,7 +1066,7 @@ ${charDetails}
     if (!successfulContent) {
       return NextResponse.json(
         {
-          error: 'Не удалось получить ответ от нейросети. Проверьте интернет-соединение, доступность API или укажите действующий API-ключ в Настройках.',
+          error: 'Не удалось получить ответ от нейросети. Проверьте интернет-соединение или настройки выбранных провайдеров (OpenRouter / Gemini / LM Studio) в Настройках.',
           isApiError: true,
         },
         { status: 502 }
@@ -1012,7 +1079,8 @@ ${charDetails}
       character,
       action,
       currentDay,
-      currentMinutes
+      currentMinutes,
+      partyPlayers
     );
 
     if (!parsedResponse.requires_roll) {

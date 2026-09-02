@@ -95,9 +95,11 @@ export type RollType = 'skill_check' | 'attack_roll' | 'saving_throw' | 'initiat
 
 export interface RollRequirement {
   needed: boolean;
+  target_character_id?: string; // ID of the character required to roll
+  target_character_name?: string; // Name of the character required to roll (e.g. "Торгрим")
   roll_type?: RollType | string;
   ability?: string; // e.g. "WIS", "DEX", "STR"
-  skill?: string;   // e.g. "Perception", "Stealth"
+  skill?: string;   // e.g. "Perception", "Stealth", "Athletics"
   dc?: number;
   reason?: string;
 }
@@ -147,16 +149,28 @@ export interface DiceRollResult {
   statOrSkill?: string;
   dc?: number;
   passed?: boolean;
+  characterName?: string;
+  characterId?: string;
+  reason?: string;
 }
 
 export interface ChatMessage {
   id: string;
-  role: 'user' | 'model';
+  role: 'user' | 'model' | 'system';
   text: string;
   thought?: string; // Collapsible neural network thinking/reasoning
   timestamp: number;
   gameTime?: string; // e.g. "День 1 • 08:30"
+  senderId?: string;
+  senderName?: string;
+  senderCharacterName?: string;
+  senderClass?: string;
+  senderRace?: string;
+  senderColor?: string;
   rollResult?: DiceRollResult;
+  rollRequest?: RollRequirement;
+  isTargetedRollWaiting?: boolean;
+  waitingPlayerName?: string;
   stateUpdateApplied?: StateUpdate;
   isError?: boolean; // Error message indicator
   failedAction?: string; // Original action to retry
@@ -232,3 +246,69 @@ export interface CharacterPreset {
   avatarIcon: string;
   accentColor: string;
 }
+
+// LAN Multiplayer Types
+export interface NetworkPlayer {
+  id: string; // Unique client socket ID / UUID
+  name: string; // Player user name (or character name)
+  character: CharacterSheet;
+  isHost?: boolean;
+  isReady?: boolean;
+  connectedAt?: number;
+  color?: string; // Player badge accent color
+  ping?: number;
+}
+
+export interface PlayerRoundAction {
+  playerId: string;
+  characterName: string;
+  playerClass?: string;
+  playerRace?: string;
+  playerColor?: string;
+  actionText: string;
+  timestamp: number;
+}
+
+export interface MultiplayerRoomState {
+  isHost: boolean;
+  connected: boolean;
+  hostAddress: string;
+  roomName: string;
+  players: NetworkPlayer[];
+  currentLocation: string;
+  inGameDay: number;
+  inGameMinutes: number;
+  inGameTime: string;
+  pendingRoll: RollRequirement | null;
+  isDmThinking: boolean;
+  history: ChatMessage[];
+  roundActions?: Record<string, PlayerRoundAction>;
+}
+
+export type WsClientMessage =
+  | { type: 'JOIN_ROOM'; player: { id: string; name: string; character: CharacterSheet; isHost?: boolean; color?: string } }
+  | { type: 'UPDATE_CHARACTER'; character: CharacterSheet }
+  | { type: 'SEND_ACTION'; actionText: string; characterId: string; characterName: string; playerClass?: string; playerRace?: string; playerColor?: string }
+  | { type: 'SUBMIT_ROLL'; rollResult: DiceRollResult; rollReq: RollRequirement }
+  | { type: 'TRIGGER_NEXT_DM_STEP'; triggerReason?: string }
+  | { type: 'FORCE_DM_TURN' }
+  | { type: 'UPDATE_STATE_HOST'; state: Partial<MultiplayerRoomState> }
+  | { type: 'PING'; timestamp: number };
+
+export type WsServerMessage =
+  | { type: 'ROOM_STATE'; state: MultiplayerRoomState }
+  | { type: 'PLAYER_JOINED'; player: NetworkPlayer }
+  | { type: 'PLAYER_LEFT'; playerId: string; playerName: string }
+  | { type: 'PLAYER_UPDATED'; player: NetworkPlayer }
+  | { type: 'CHAT_MESSAGE'; message: ChatMessage }
+  | { type: 'CHAT_HISTORY_SYNC'; history: ChatMessage[] }
+  | { type: 'DM_START_THINKING' }
+  | { type: 'DM_RESPONSE'; message: ChatMessage; stateUpdate: StateUpdate; pendingRoll: RollRequirement | null; suggestedActions?: string[]; nearbyNpcs?: any[] }
+  | { type: 'ROUND_STATE_UPDATE'; roundActions: Record<string, PlayerRoundAction> }
+  | { type: 'FORCE_DM_TURN' }
+  | { type: 'ROLL_REQUEST_BROADCAST'; pendingRoll: RollRequirement }
+  | { type: 'ROLL_RESOLVED_BROADCAST'; rollMessage: ChatMessage; rollResult: DiceRollResult }
+  | { type: 'STATE_SYNC'; currentLocation?: string; inGameDay?: number; inGameMinutes?: number; inGameTime?: string; partyCompanions?: PartyCompanion[] }
+  | { type: 'PONG'; clientTimestamp: number; serverTimestamp: number }
+  | { type: 'ERROR'; error: string };
+

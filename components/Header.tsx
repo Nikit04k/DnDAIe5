@@ -10,6 +10,7 @@ import {
   Download,
   Upload,
   PlusCircle,
+  RotateCcw,
   Shield,
   Heart,
   MapPin,
@@ -30,10 +31,15 @@ interface HeaderProps {
   onImportSave: (file: File) => void;
   isGameStarted: boolean;
   modelName: string;
+  useOpenRouter?: boolean;
   useGemini?: boolean;
   geminiModel?: string;
   useLmStudio?: boolean;
   lmStudioModel?: string;
+  onOpenMultiplayer?: () => void;
+  isMultiplayerConnected?: boolean;
+  isHost?: boolean;
+  playerCount?: number;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -49,10 +55,15 @@ export const Header: React.FC<HeaderProps> = ({
   onImportSave,
   isGameStarted,
   modelName,
+  useOpenRouter = true,
   useGemini = false,
   geminiModel = 'gemini-3.6-flash',
   useLmStudio = false,
   lmStudioModel = '',
+  onOpenMultiplayer,
+  isMultiplayerConnected = false,
+  isHost = false,
+  playerCount = 0,
 }) => {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -98,7 +109,23 @@ export const Header: React.FC<HeaderProps> = ({
                 <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 shadow-[0_0_6px_rgba(34,211,238,0.8)]" />
                 <span>♊ Gemini 3.7-Flash</span>
               </span>
-            ) : null}
+            ) : useOpenRouter ? (
+              <span
+                className="text-[9px] sm:text-[10px] font-bold tracking-wider px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-400/40 flex items-center gap-1 flex-shrink-0"
+                title={`OpenRouter: ${modelName}`}
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.8)]" />
+                <span>🌐 OpenRouter</span>
+              </span>
+            ) : (
+              <span
+                className="text-[9px] sm:text-[10px] font-bold tracking-wider px-2 py-0.5 rounded-full bg-red-500/20 text-red-300 border border-red-400/40 flex items-center gap-1 flex-shrink-0"
+                title="Все провайдеры AI отключены"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
+                <span>⚠️ AI Отключен</span>
+              </span>
+            )}
           </div>
           <p className="text-[10px] sm:text-[11px] text-slate-400 font-sans hidden sm:block">
             5th Edition AI Adventure (Solo & Co-op)
@@ -139,9 +166,44 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         )}
 
+        {/* LAN Multiplayer Button */}
+        {onOpenMultiplayer && (
+          <button
+            onClick={onOpenMultiplayer}
+            title={
+              isMultiplayerConnected
+                ? isHost
+                  ? `LAN Хост активен (игроков: ${playerCount}) [Alt+M]`
+                  : 'Подключен к LAN хосту [Alt+M]'
+                : 'Локальный мультиплеер LAN [Alt+M]'
+            }
+            className={`p-2 sm:px-3 sm:py-1.5 rounded-xl border transition flex items-center gap-1.5 text-xs font-semibold shadow-sm cursor-pointer ${
+              isMultiplayerConnected
+                ? isHost
+                  ? 'bg-amber-950/60 border-amber-500/60 text-amber-300 hover:bg-amber-900/60'
+                  : 'bg-cyan-950/60 border-cyan-500/60 text-cyan-300 hover:bg-cyan-900/60'
+                : 'bg-slate-900 hover:bg-slate-800 border-slate-800 text-slate-300 hover:border-amber-500/40'
+            }`}
+          >
+            <div className="relative">
+              <span className="text-base leading-none">👥</span>
+              {isMultiplayerConnected && (
+                <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]" />
+              )}
+            </div>
+            <span className="hidden sm:inline">
+              {isMultiplayerConnected
+                ? isHost
+                  ? `LAN Хост (${playerCount})`
+                  : 'LAN Игрок'
+                : 'LAN Игра'}
+            </span>
+          </button>
+        )}
+
         <button
           onClick={onOpenDiceRoller}
-          title="Бросить дайсы (Dice Tray)"
+          title="Бросить дайсы (Dice Tray) [Alt+D]"
           className="hidden sm:flex p-2 sm:px-3 sm:py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-amber-500/40 text-amber-400 hover:text-amber-300 transition items-center gap-1.5 text-xs font-semibold shadow-sm cursor-pointer"
         >
           <Dices className="w-4 h-4" />
@@ -151,7 +213,7 @@ export const Header: React.FC<HeaderProps> = ({
         {isGameStarted && (
           <button
             onClick={onOpenJournal}
-            title="Журнал и заметки"
+            title="Журнал, Лорбук и Отряд [Alt+J]"
             className="hidden md:flex p-2 sm:px-3 sm:py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-purple-500/40 text-purple-400 hover:text-purple-300 transition items-center gap-1.5 text-xs font-semibold shadow-sm cursor-pointer"
           >
             <BookOpen className="w-4 h-4" />
@@ -177,14 +239,14 @@ export const Header: React.FC<HeaderProps> = ({
           <>
             <button
               onClick={onExportSave}
-              title="Экспорт (JSON)"
+              title="Экспорт сохранения в файл (JSON)"
               className="hidden lg:flex p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-slate-200 transition cursor-pointer"
             >
               <Download className="w-4 h-4" />
             </button>
             <button
               onClick={() => fileInputRef.current?.click()}
-              title="Импорт (JSON)"
+              title="Импорт сохранения из файла (JSON)"
               className="hidden lg:flex p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-slate-200 transition cursor-pointer"
             >
               <Upload className="w-4 h-4" />
@@ -202,17 +264,17 @@ export const Header: React.FC<HeaderProps> = ({
         {/* New Game */}
         <button
           onClick={onNewAdventure}
-          title="Новый персонаж / Новая игра"
+          title="Создать нового персонажа / Начать новую кампанию"
           className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-amber-400 transition cursor-pointer"
         >
-          <PlusCircle className="w-4 h-4" />
+          <RotateCcw className="w-4 h-4" />
         </button>
 
-        {/* Settings Button */}
+        {/* Settings */}
         <button
           onClick={onOpenSettings}
-          title="Настройки кампании и ИИ"
-          className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-amber-400 transition cursor-pointer"
+          title="Настройки нейросети, моделей и озвучки [Alt+S]"
+          className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-amber-400 transition cursor-pointer"
         >
           <Settings className="w-4 h-4" />
         </button>
