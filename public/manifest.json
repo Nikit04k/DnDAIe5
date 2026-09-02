@@ -1,0 +1,18 @@
+{
+  "name": "DnDAIe5 • AI Dungeon Master & Party RPG",
+  "short_name": "DnDAIe5",
+  "description": "5th Edition Solo & Co-op AI RPG Campaign with Google Gemini, LM Studio, and OpenRouter",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#020617",
+  "theme_color": "#020617",
+  "icons": [
+    {
+      "src": "/icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

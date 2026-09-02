@@ -18,6 +18,11 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "DnDAIe5 • AI Dungeon Master & Party RPG",
   description: "D&D 5e приключение с искусственным интеллектом в роли Мастера Подземелий (Solo & Co-op).",
+  manifest: "/manifest.json",
+  icons: {
+    icon: "/icon.png",
+    apple: "/icon.png",
+  },
 };
 
 export const viewport = {

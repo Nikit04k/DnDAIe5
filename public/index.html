@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="ru" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#020617">
+  <title>DnDAIe5 • AI Dungeon Master & Party RPG</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/png" href="/icon.png">
+  <link rel="apple-touch-icon" href="/icon.png">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: #020617;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px;
+      text-align: center;
+    }
+    .card {
+      background: linear-gradient(180deg, rgba(15, 23, 42, 0.9), rgba(2, 6, 23, 0.95));
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      border-radius: 24px;
+      padding: 32px 24px;
+      max-width: 420px;
+      width: 100%;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.8), 0 0 30px rgba(245, 158, 11, 0.1);
+    }
+    .logo {
+      width: 100px;
+      height: 100px;
+      border-radius: 24px;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 25px rgba(245, 158, 11, 0.4);
+      border: 2px solid rgba(245, 158, 11, 0.5);
+    }
+    h1 {
+      font-size: 24px;
+      font-weight: 800;
+      color: #fbbf24;
+      margin-bottom: 8px;
+      letter-spacing: 1px;
+    }
+    p {
+      font-size: 13px;
+      color: #94a3b8;
+      margin-bottom: 24px;
+      line-height: 1.5;
+    }
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 14px;
+      background: linear-gradient(135deg, #d97706, #f59e0b);
+      color: #020617;
+      font-weight: 800;
+      font-size: 14px;
+      border: none;
+      border-radius: 14px;
+      cursor: pointer;
+      text-decoration: none;
+      margin-bottom: 12px;
+      box-shadow: 0 4px 15px rgba(245, 158, 11, 0.3);
+      transition: all 0.2s ease;
+    }
+    .btn:active {
+      transform: scale(0.98);
+      filter: brightness(0.9);
+    }
+    .input-group {
+      margin-top: 16px;
+      text-align: left;
+    }
+    .input-group label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: #cbd5e1;
+      margin-bottom: 6px;
+      display: block;
+    }
+    .input-group input {
+      width: 100%;
+      background: #090d16;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 12px;
+      color: #f8fafc;
+      font-size: 13px;
+      margin-bottom: 12px;
+      outline: none;
+    }
+    .input-group input:focus {
+      border-color: #f59e0b;
+    }
+    .status {
+      font-size: 11px;
+      color: #64748b;
+      margin-top: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <img src="/icon.png" alt="DnDAIe5 Logo" class="logo">
+    <h1>DnDAIe5 Mobile</h1>
+    <p>5th Edition AI RPG (Solo & LAN Co-op). Подключение к игровому серверу Мастера.</p>
+
+    <a href="/" class="btn" id="localBtn">🚀 Войти в игру</a>
+
+    <div class="input-group">
+      <label>Подключение к LAN Хосту (ПК):</label>
+      <input type="text" id="hostInput" placeholder="http://192.168.1.50:3000">
+      <button type="button" class="btn" id="connectBtn" style="background: linear-gradient(135deg, #0284c7, #38bdf8);">🌐 Подключиться к ПК</button>
+    </div>
+
+    <div class="status">DnDAIe5 Mobile Client • D&D 5e AI DM Engine</div>
+  </div>
+
+  <script>
+    const savedHost = localStorage.getItem('dnd_remote_host') || '';
+    if (savedHost) {
+      document.getElementById('hostInput').value = savedHost;
+    }
+
+    document.getElementById('connectBtn').addEventListener('click', () => {
+      let host = document.getElementById('hostInput').value.trim();
+      if (!host) return;
+      if (!host.startsWith('http://') && !host.startsWith('https://')) {
+        host = 'http://' + host;
+      }
+      localStorage.setItem('dnd_remote_host', host);
+      window.location.href = host;
+    });
+
+    // If served inside Capacitor native app, auto-redirect to saved host if present
+    if (window.Capacitor && savedHost) {
+      window.location.href = savedHost;
+    }
+  </script>
+</body>
+</html>

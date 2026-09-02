@@ -9,6 +9,10 @@
     "start": "node server.js",
     "start:next": "next start -H 0.0.0.0 -p 3000",
     "lan:ws": "node server/lanServer.js",
+    "electron": "electron electron/main.js",
+    "electron:dev": "cross-env NODE_ENV=development electron electron/main.js",
+    "dist:win": "npm run build && electron-builder --win --x64",
+    "cap:sync": "npx cap sync android",
     "lint": "next lint"
   },
   "dependencies": {
@@ -22,10 +26,16 @@
     "ws": "^8.21.3"
   },
   "devDependencies": {
+    "@capacitor/android": "^8.5.1",
+    "@capacitor/cli": "^8.5.1",
+    "@capacitor/core": "^8.5.1",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/ws": "^8.18.1",
+    "cross-env": "^10.1.0",
+    "electron": "^44.1.1",
+    "electron-builder": "^26.15.3",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.2"
