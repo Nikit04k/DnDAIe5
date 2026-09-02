@@ -1,0 +1,121 @@
+name: Build and Publish Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Windows Installer & Portable
+        run: npm run dist:win
+
+      - name: Upload Windows Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-binaries
+          path: |
+            dist/DnDAIe5-Setup-*.exe
+            dist/DnDAIe5-Portable-*.exe
+
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Sync Capacitor Android
+        run: npm run cap:sync
+
+      - name: Build Android APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Copy and rename APK
+        run: |
+          mkdir -p dist
+          cp android/app/build/outputs/apk/debug/app-debug.apk dist/DnDAIe5-Mobile.apk
+
+      - name: Upload Android Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-binary
+          path: dist/DnDAIe5-Mobile.apk
+
+  publish-release:
+    needs: [build-windows, build-android]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Windows Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-binaries
+          path: dist
+
+      - name: Download Android Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: android-binary
+          path: dist
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          body: |
+            # ⚔️ DnDAIe5 — AI Dungeon Master & Party RPG
+
+            ## 📦 Скачать установщики:
+            - **Windows Setup (Инсталлятор NSIS):** `DnDAIe5-Setup-1.0.0.exe`
+            - **Windows Portable (Портативная версия):** `DnDAIe5-Portable-1.0.0.exe`
+            - **Android (Установочный APK):** `DnDAIe5-Mobile.apk`
+
+            ### 🌟 Особенности:
+            - Полноценная локальная и облачная поддержка нейросетей (LM Studio, Gemini API, OpenRouter).
+            - LAN мультиплеер для совместных D&D сессий с друзьями по Wi-Fi.
+            - Озвучка Dungeon Master через Edge TTS.
+            - Античит с жесткой привязкой к инвентарю персонажа.
+          files: |
+            dist/*.exe
+            dist/*.apk
