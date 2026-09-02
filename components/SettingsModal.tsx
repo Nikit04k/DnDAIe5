@@ -544,6 +544,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }, 600);
   };
 
+  const isMobileClient = typeof window !== 'undefined' && (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || Boolean((window as any).Capacitor));
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/90 backdrop-blur-sm animate-fadeIn">
       <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-xl overflow-hidden shadow-2xl flex flex-col max-h-[92dvh]">
@@ -639,6 +641,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
 
           {/* ================= LM STUDIO (LOCAL AI) PANEL ================= */}
+          {!isMobileClient && (
           <div className="bg-gradient-to-r from-emerald-950/70 via-slate-900 to-teal-950/70 border border-emerald-500/50 rounded-2xl p-4.5 space-y-4 shadow-xl">
             <div className="flex items-center justify-between pb-2 border-b border-slate-800">
               <div className="flex items-center gap-2">
@@ -853,6 +856,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               )}
             </div>
           </div>
+          )}
 
           {/* ================= GOOGLE GEMINI FREE TIER (3-FLASH) PANEL ================= */}
           <div className="bg-gradient-to-r from-blue-950/60 via-slate-900 to-cyan-950/60 border border-cyan-500/50 rounded-2xl p-4.5 space-y-4 shadow-xl">

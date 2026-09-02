@@ -3,7 +3,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 const config: CapacitorConfig = {
   appId: 'com.dndaie5.app',
   appName: 'DnDAIe5',
-  webDir: 'public',
+  webDir: 'out',
   server: {
     androidScheme: 'https',
     cleartext: true,

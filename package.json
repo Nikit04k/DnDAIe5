@@ -12,7 +12,9 @@
     "electron": "electron electron/main.js",
     "electron:dev": "cross-env NODE_ENV=development electron electron/main.js",
     "dist:win": "npm run build && electron-builder --win --x64",
+    "cap:build": "node scripts/buildMobile.js && npx cap sync android",
     "cap:sync": "npx cap sync android",
+    "build:apk": "npm run cap:build && cd android && .\\gradlew.bat assembleDebug",
     "lint": "next lint"
   },
   "dependencies": {

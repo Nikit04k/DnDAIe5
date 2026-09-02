@@ -134,6 +134,17 @@
       if (!host.startsWith('http://') && !host.startsWith('https://')) {
         host = 'http://' + host;
       }
+      // If no port specified, default to :3000
+      try {
+        const parsed = new URL(host);
+        if (!parsed.port && parsed.hostname !== 'localhost' && !parsed.pathname.includes(':')) {
+          host = `${parsed.protocol}//${parsed.hostname}:3000${parsed.pathname}`;
+        }
+      } catch (e) {
+        if (!host.includes(':', 7)) {
+          host = host + ':3000';
+        }
+      }
       localStorage.setItem('dnd_remote_host', host);
       window.location.href = host;
     });

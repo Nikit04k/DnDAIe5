@@ -49,6 +49,7 @@ const DEFAULT_LOREBOOK_ENTRIES: LorebookEntry[] = [
 ];
 import { CHARACTER_PRESETS, normalizeRationItem } from '@/lib/dndRules';
 import { parseAndAdvanceTime, formatInGameClock } from '@/lib/timeUtils';
+import { executeDirectDmTurn } from '@/lib/directAiClient';
 import {
   saveSessionState,
   loadSessionState,
@@ -376,10 +377,13 @@ export default function DnDApp() {
         ? state.networkPlayers
         : [{ id: state.localPlayerId, name: state.character.name, character: state.character, isHost: true }];
 
-      const res = await fetch('/api/dm', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      let data: DmResponse & { providerUsed?: string };
+
+      const isMobileStandalone = typeof window !== 'undefined' && (Boolean((window as any).Capacitor) || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
+
+      if (isMobileStandalone && !state.isMultiplayerConnected) {
+        // Standalone Direct Client Cloud AI (Google Gemini / OpenRouter) on Mobile
+        data = await executeDirectDmTurn({
           world: state.world,
           character: state.character,
           partyPlayers: activePartyPlayers,
@@ -400,19 +404,73 @@ export default function DnDApp() {
           useGemini: state.useGemini,
           geminiApiKey: state.geminiApiKey && state.geminiApiKey.trim().length > 5 ? state.geminiApiKey.trim() : undefined,
           geminiModel: state.geminiModel,
-          useLmStudio: state.useLmStudio,
-          lmStudioUrl: state.lmStudioUrl || undefined,
-          lmStudioModel: state.lmStudioModel || undefined,
-          lmStudioApiKey: state.lmStudioApiKey || undefined,
-        }),
-      });
+        });
+      } else {
+        try {
+          const res = await fetch('/api/dm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              world: state.world,
+              character: state.character,
+              partyPlayers: activePartyPlayers,
+              history: newHistory,
+              action: actionText,
+              partyCompanions: state.partyCompanions,
+              journalEntries: state.journalEntries,
+              lorebookEntries: state.lorebookEntries,
+              storySummary: state.storySummary,
+              inGameDay: state.inGameDay,
+              inGameMinutes: state.inGameMinutes,
+              inGameTime: actionStartTime,
+              apiKey: state.apiKey && state.apiKey.trim().length > 10 ? state.apiKey.trim() : undefined,
+              modelName: state.modelName,
+              baseUrl: state.baseUrl || undefined,
+              customPrompt: state.customPrompt || undefined,
+              useOpenRouter: state.useOpenRouter,
+              useGemini: state.useGemini,
+              geminiApiKey: state.geminiApiKey && state.geminiApiKey.trim().length > 5 ? state.geminiApiKey.trim() : undefined,
+              geminiModel: state.geminiModel,
+              useLmStudio: state.useLmStudio,
+              lmStudioUrl: state.lmStudioUrl || undefined,
+              lmStudioModel: state.lmStudioModel || undefined,
+              lmStudioApiKey: state.lmStudioApiKey || undefined,
+            }),
+          });
 
-      if (!res.ok) {
-        const errorJson = await res.json().catch(() => null);
-        throw new Error(errorJson?.error || `Сервер API вернул статус ${res.status}`);
+          if (!res.ok) {
+            const errorJson = await res.json().catch(() => null);
+            throw new Error(errorJson?.error || `Сервер API вернул статус ${res.status}`);
+          }
+
+          data = await res.json();
+        } catch (serverErr: any) {
+          console.warn('API /api/dm request failed, executing direct client AI fallback:', serverErr?.message);
+          data = await executeDirectDmTurn({
+            world: state.world,
+            character: state.character,
+            partyPlayers: activePartyPlayers,
+            history: newHistory,
+            action: actionText,
+            partyCompanions: state.partyCompanions,
+            journalEntries: state.journalEntries,
+            lorebookEntries: state.lorebookEntries,
+            storySummary: state.storySummary,
+            inGameDay: state.inGameDay,
+            inGameMinutes: state.inGameMinutes,
+            inGameTime: actionStartTime,
+            apiKey: state.apiKey && state.apiKey.trim().length > 10 ? state.apiKey.trim() : undefined,
+            modelName: state.modelName,
+            baseUrl: state.baseUrl || undefined,
+            customPrompt: state.customPrompt || undefined,
+            useOpenRouter: state.useOpenRouter,
+            useGemini: state.useGemini,
+            geminiApiKey: state.geminiApiKey && state.geminiApiKey.trim().length > 5 ? state.geminiApiKey.trim() : undefined,
+            geminiModel: state.geminiModel,
+          });
+        }
       }
 
-      const data: DmResponse & { providerUsed?: string } = await res.json();
       if (!data || !data.narrative) {
         throw new Error('Нейросеть не вернула повествование.');
       }
