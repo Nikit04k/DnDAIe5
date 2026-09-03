@@ -242,14 +242,20 @@ export function setGeminiApiActive(active: boolean): void {
 }
 
 export function getStoredGeminiModel(): string {
-  if (typeof window === 'undefined') return 'gemini-3.6-flash';
-  return localStorage.getItem('dnd_gemini_model') || 'gemini-3.6-flash';
+  if (typeof window === 'undefined') return 'gemini-3.7-flash';
+  const val = localStorage.getItem('dnd_gemini_model');
+  const allowed = ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash'];
+  if (!val || !allowed.includes(val)) {
+    return 'gemini-3.7-flash';
+  }
+  return val;
 }
 
 export function setStoredGeminiModel(model: string): void {
   if (typeof window === 'undefined') return;
   localStorage.setItem('dnd_gemini_model', model);
 }
+
 
 export function getGeminiUsageStats(): GeminiUsageStats {
   const todayStr = new Date().toISOString().split('T')[0];
@@ -446,4 +452,6 @@ export function setStoredWorldSettings(world: WorldSettings): void {
     console.error('Failed to save world settings:', err);
   }
 }
+
+
 

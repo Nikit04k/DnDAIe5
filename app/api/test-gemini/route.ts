@@ -5,16 +5,26 @@ export const runtime = 'nodejs';
 
 export async function POST(req: NextRequest) {
   const startTime = Date.now();
+  let requestedModel = 'gemini-3.7-flash';
 
   try {
     const body = await req.json();
     const {
       apiKey: userApiKey = '',
-      model: userModel = 'gemini-3.6-flash',
-      testPrompt = 'Ответь кратко (1-2 предложения) на русском языке: "Связь с Gemini API (Free Tier 3.6-Flash) успешно установлена!" и приветствуй игрока.',
+      model: userModel = 'gemini-3.7-flash',
+      testPrompt = 'Ответь кратко (1-2 предложения) на русском языке: "Связь с Gemini API успешно установлена!" и приветствуй игрока.',
+    }: {
+      apiKey?: string;
+      model?: string;
+      testPrompt?: string;
     } = body;
 
     const apiKey = (userApiKey && userApiKey.trim().length > 0 ? userApiKey.trim() : '') || process.env.GEMINI_API_KEY || '';
+
+    const rawRequestedModel = (userModel && userModel.trim().length > 0 ? userModel.trim().replace(/^models\//, '') : 'gemini-3.7-flash');
+    requestedModel = ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash'].includes(rawRequestedModel)
+      ? rawRequestedModel
+      : 'gemini-3.7-flash';
 
     if (!apiKey) {
       return NextResponse.json({
@@ -22,20 +32,16 @@ export async function POST(req: NextRequest) {
         status: 401,
         latencyMs: 0,
         error: 'API-ключ Gemini не введён. Получите бесплатный ключ в Google AI Studio (aistudio.google.com) и вставьте в поле выше.',
-        modelUsed: userModel,
+        modelUsed: requestedModel,
       });
     }
 
-    const requestedModel = userModel.replace(/^models\//, '');
     const geminiModelsToTry = Array.from(
       new Set([
         requestedModel,
         'gemini-3.7-flash',
         'gemini-3.6-flash',
-        'gemini-2.5-flash',
-        'google/gemini-3.7-flash',
-        'google/gemini-3.6-flash',
-        'google/gemini-2.5-flash',
+        'gemini-3.5-flash',
       ])
     );
 
@@ -186,7 +192,7 @@ export async function POST(req: NextRequest) {
       error: isTimeout
         ? 'Таймаут подключения к Gemini API (12 сек). Проверьте интернет-соединение.'
         : `Ошибка сети: ${err?.message || 'Не удалось связаться с Gemini API'}`,
-      modelUsed: 'gemini-2.5-flash',
+      modelUsed: requestedModel || 'gemini-3.7-flash',
     });
   }
 }

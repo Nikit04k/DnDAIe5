@@ -287,3 +287,41 @@ server.listen(PORT, HOST, () => {
   const lanIp = getLanIp();
   console.log(`[Standalone LAN WS Server] Running on ws://${lanIp}:${PORT}`);
 });
+
+let isShuttingDown = false;
+function shutdown(exitCode = 0) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log('\n[Standalone LAN WS Server] Shutting down...');
+
+  try {
+    for (const [id, client] of connectedClients.entries()) {
+      try {
+        client.ws.terminate();
+      } catch (e) {}
+    }
+    connectedClients.clear();
+    wss.close();
+  } catch (e) {}
+
+  try {
+    server.close(() => process.exit(exitCode));
+  } catch (e) {
+    process.exit(exitCode);
+  }
+
+  setTimeout(() => process.exit(exitCode), 400).unref();
+}
+
+process.on('SIGINT', () => shutdown(0));
+process.on('SIGTERM', () => shutdown(0));
+process.on('SIGBREAK', () => shutdown(0));
+process.on('SIGHUP', () => shutdown(0));
+
+try {
+  if (process.stdin && process.stdin.isTTY && typeof process.stdin.resume === 'function') {
+    process.stdin.resume();
+    process.stdin.on('end', () => shutdown(0));
+    process.stdin.on('close', () => shutdown(0));
+  }
+} catch (e) {}

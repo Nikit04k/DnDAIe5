@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { CharacterSheet, WorldSettings, ChatMessage, DmResponse, PartyCompanion, LorebookEntry } from '@/types/dnd';
 import { parseAndAdvanceTime } from '@/lib/timeUtils';
 
+
 function enrichStateUpdateFromNarrative(
   parsed: DmResponse,
   rawNarrative: string,
@@ -584,7 +585,8 @@ export async function POST(req: NextRequest) {
     const lmStudioModel = userLmStudioModel || '';
     const lmStudioApiKey = userLmStudioApiKey || 'lm-studio';
     const geminiApiKey = (userGeminiApiKey && userGeminiApiKey.trim().length > 0 ? userGeminiApiKey.trim() : '') || process.env.GEMINI_API_KEY || '';
-    const geminiModel = (userGeminiModel && userGeminiModel.trim().length > 0 ? userGeminiModel.trim().replace(/^models\//, '') : 'gemini-3.7-flash');
+    const rawGeminiModel = (userGeminiModel && userGeminiModel.trim().length > 0 ? userGeminiModel.trim().replace(/^models\//, '') : 'gemini-3.7-flash');
+    const geminiModel = ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash'].includes(rawGeminiModel) ? rawGeminiModel : 'gemini-3.7-flash';
     const isGeminiActive = Boolean(useGemini && geminiApiKey);
 
     const chosenModel = userModel || userModelName || 'nvidia/nemotron-3-super-120b-a12b:free';
@@ -985,10 +987,7 @@ ${charDetails}
           geminiModel,
           'gemini-3.7-flash',
           'gemini-3.6-flash',
-          'gemini-2.5-flash',
-          'google/gemini-3.7-flash',
-          'google/gemini-3.6-flash',
-          'google/gemini-2.5-flash',
+          'gemini-3.5-flash',
         ])
       );
 
@@ -1116,9 +1115,11 @@ ${charDetails}
 
     // Return clear API error if all models failed or network is down
     if (!successfulContent) {
+      const errMsg = 'Не удалось получить ответ от нейросети. Проверьте интернет-соединение или настройки выбранных провайдеров (LM Studio / Gemini / OpenRouter) в Настройках.';
+
       return NextResponse.json(
         {
-          error: 'Не удалось получить ответ от нейросети. Проверьте интернет-соединение или настройки выбранных провайдеров (OpenRouter / Gemini / LM Studio) в Настройках.',
+          error: errMsg,
           isApiError: true,
         },
         { status: 502 }

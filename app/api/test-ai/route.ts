@@ -13,6 +13,11 @@ export async function POST(req: NextRequest) {
       model = 'nvidia/nemotron-3-super-120b-a12b:free',
       baseUrl = '',
       testPrompt = 'Ответь кратко (1-2 предложения) на русском языке: "Связь с Мастером Подземелий установлена!" и дай короткое напутствие игроку.',
+    }: {
+      apiKey?: string;
+      model?: string;
+      baseUrl?: string;
+      testPrompt?: string;
     } = body;
 
     const apiKey = (userApiKey && userApiKey.trim().length > 0 ? userApiKey.trim() : '') || process.env.OPENROUTER_API_KEY || '';

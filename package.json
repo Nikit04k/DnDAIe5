@@ -1,12 +1,12 @@
 {
   "name": "dnd-ai-5e",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "scripts": {
-    "dev": "node server.js",
+    "dev": "cross-env NODE_ENV=development node server.js",
     "dev:next": "next dev -H 0.0.0.0",
     "build": "next build",
-    "start": "node server.js",
+    "start": "cross-env NODE_ENV=production node server.js",
     "start:next": "next start -H 0.0.0.0 -p 3000",
     "lan:ws": "node server/lanServer.js",
     "electron": "electron electron/main.js",

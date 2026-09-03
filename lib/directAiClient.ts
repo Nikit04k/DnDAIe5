@@ -31,8 +31,8 @@ export interface DirectDmRequest {
 export function isStandaloneMobile(): boolean {
   if (typeof window === 'undefined') return false;
   if (process.env.NEXT_PUBLIC_EXPORT === 'true') return true;
-  if (Boolean((window as any).Capacitor)) return true;
-  if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) return true;
+  if (window.location.protocol === 'file:' || window.location.protocol === 'capacitor:') return true;
+  if (Boolean((window as any).Capacitor?.isNativePlatform?.())) return true;
   return false;
 }
 
@@ -372,7 +372,8 @@ export async function executeDirectDmTurn(request: DirectDmRequest): Promise<DmR
 
   const geminiApiKey = (userGeminiApiKey && userGeminiApiKey.trim().length > 0 ? userGeminiApiKey.trim() : '');
   const isGeminiActive = Boolean(useGemini && geminiApiKey);
-  const geminiModel = (userGeminiModel && userGeminiModel.trim().length > 0 ? userGeminiModel.trim().replace(/^models\//, '') : 'gemini-3.7-flash');
+  const rawGeminiModel = (userGeminiModel && userGeminiModel.trim().length > 0 ? userGeminiModel.trim().replace(/^models\//, '') : 'gemini-3.7-flash');
+  const geminiModel = ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash'].includes(rawGeminiModel) ? rawGeminiModel : 'gemini-3.7-flash';
 
   const openRouterApiKey = (userApiKey && userApiKey.trim().length > 0 ? userApiKey.trim() : '');
   const isOpenRouterActive = Boolean(useOpenRouter !== false);
@@ -764,7 +765,7 @@ export async function testDirectGeminiConnection(options: {
   const startTime = Date.now();
   const {
     apiKey: userApiKey = '',
-    model: userModel = 'gemini-3.6-flash',
+    model: userModel = 'gemini-3.7-flash',
     testPrompt = 'Ответь кратко (1-2 предложения) на русском языке: "Связь с Gemini API успешно установлена!" и приветствуй игрока.',
   } = options;
 
@@ -779,13 +780,14 @@ export async function testDirectGeminiConnection(options: {
     };
   }
 
-  const requestedModel = userModel.replace(/^models\//, '');
+  const rawRequestedModel = (userModel && userModel.trim().length > 0 ? userModel.trim().replace(/^models\//, '') : 'gemini-3.7-flash');
+  const requestedModel = ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash'].includes(rawRequestedModel) ? rawRequestedModel : 'gemini-3.7-flash';
   const geminiModelsToTry = Array.from(
     new Set([
       requestedModel,
       'gemini-3.7-flash',
       'gemini-3.6-flash',
-      'gemini-2.5-flash',
+      'gemini-3.5-flash',
     ])
   );
 

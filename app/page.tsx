@@ -194,6 +194,8 @@ export default function DnDApp() {
   const [useGemini, setUseGemini] = useState<boolean>(false);
   const [geminiModel, setGeminiModel] = useState<string>('gemini-3.7-flash');
 
+
+
   // GPU Saver / Performance Mode
   const [gpuSaverActive, setGpuSaverActive] = useState<boolean>(true);
 
@@ -464,11 +466,16 @@ export default function DnDApp() {
           const contentType = res.headers.get('content-type') || '';
           if (!res.ok || contentType.includes('text/html')) {
             const errorJson = !contentType.includes('text/html') ? await res.json().catch(() => null) : null;
-            throw new Error(errorJson?.error || `Сервер API вернул статус ${res.status}`);
+            const apiError = new Error(errorJson?.error || `Сервер API вернул статус ${res.status}`);
+            (apiError as any).isApiError = true;
+            throw apiError;
           }
 
           data = await res.json();
         } catch (serverErr: any) {
+          if (serverErr.isApiError) {
+            throw serverErr;
+          }
           console.warn('API /api/dm request failed, executing direct client AI fallback:', serverErr?.message);
           data = await executeDirectDmTurn({
             world: state.world,
@@ -1084,11 +1091,16 @@ export default function DnDApp() {
           const contentType = res.headers.get('content-type') || '';
           if (!res.ok || contentType.includes('text/html')) {
             const errorJson = !contentType.includes('text/html') ? await res.json().catch(() => null) : null;
-            throw new Error(errorJson?.error || `Сервер API вернул статус ${res.status}`);
+            const apiError = new Error(errorJson?.error || `Сервер API вернул статус ${res.status}`);
+            (apiError as any).isApiError = true;
+            throw apiError;
           }
 
           data = await res.json();
         } catch (serverErr: any) {
+          if (serverErr.isApiError) {
+            throw serverErr;
+          }
           console.warn('API /api/dm start game request failed, executing direct client AI fallback:', serverErr?.message);
           data = await executeDirectDmTurn({
             world: newWorld,

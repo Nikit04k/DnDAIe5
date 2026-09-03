@@ -57,7 +57,7 @@ export const Header: React.FC<HeaderProps> = ({
   modelName,
   useOpenRouter = true,
   useGemini = false,
-  geminiModel = 'gemini-3.6-flash',
+  geminiModel = 'gemini-3.7-flash',
   useLmStudio = false,
   lmStudioModel = '',
   onOpenMultiplayer,
@@ -272,6 +272,7 @@ export const Header: React.FC<HeaderProps> = ({
         >
           <RotateCcw className="w-4 h-4" />
         </button>
+
 
         {/* Settings */}
         <button

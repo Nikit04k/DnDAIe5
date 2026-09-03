@@ -30,6 +30,11 @@ import {
   Server,
   HardDrive,
   RefreshCw,
+  Shield,
+  Activity,
+  Wifi,
+  Radio,
+  Layers,
 } from 'lucide-react';
 import {
   getStoredTtsVoice,
@@ -124,21 +129,21 @@ export const AVAILABLE_GEMINI_MODELS: GeminiModelPreset[] = [
   {
     id: 'gemini-3.7-flash',
     name: '⚡ Gemini 3.7 Flash (Рекомендуемая)',
-    desc: 'Флагманская новейшая модель Google с глубоким пониманием правил D&D 5e и высочайшей скоростью.',
+    desc: 'Новейшая флагманская модель Google с глубоким пониманием правил D&D 5e и высочайшей скоростью.',
     limitDesc: '1 500 запросов/день • 15 запр/мин (Free Tier)',
     isFree: true,
   },
   {
     id: 'gemini-3.6-flash',
     name: '⚡ Gemini 3.6 Flash',
-    desc: 'Быстрая интеллектуальная модель Gemini 3.6 для динамичного боя и диалогов.',
+    desc: 'Быстрая интеллектуальная модель Gemini 3.6 Flash для динамичного боя и диалогов.',
     limitDesc: '1 500 запросов/день • 15 запр/мин (Free Tier)',
     isFree: true,
   },
   {
-    id: 'gemini-2.5-flash',
-    name: '⚡ Gemini 2.5 Flash',
-    desc: 'Проверенная стабильная модель серии 2.5 с моментальным откликом.',
+    id: 'gemini-3.5-flash',
+    name: '⚡ Gemini 3.5 Flash',
+    desc: 'Сверхбыстрая оптимизированная модель серии 3.5 с моментальным откликом.',
     limitDesc: '1 500 запросов/день • 15 запр/мин (Free Tier)',
     isFree: true,
   },
@@ -313,7 +318,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onSaveGeminiApiKey,
   useGemini = false,
   onSaveUseGemini,
-  geminiModel = 'gemini-3.6-flash',
+  geminiModel = 'gemini-3.7-flash',
   onSaveGeminiModel,
   useLmStudio = false,
   onSaveUseLmStudio,
@@ -361,7 +366,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [tempGeminiApiKey, setTempGeminiApiKey] = useState(geminiApiKey || getStoredGeminiApiKey());
   const [showGeminiKey, setShowGeminiKey] = useState(false);
   const [tempUseGemini, setTempUseGemini] = useState(useGemini !== undefined ? useGemini : isGeminiApiActive());
-  const [selectedGeminiModel, setSelectedGeminiModel] = useState(geminiModel || getStoredGeminiModel());
+  const validGeminiModels = ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash'];
+  const rawGeminiModel = geminiModel || getStoredGeminiModel();
+  const [selectedGeminiModel, setSelectedGeminiModel] = useState(
+    validGeminiModels.includes(rawGeminiModel) ? rawGeminiModel : 'gemini-3.7-flash'
+  );
   const [geminiStats, setGeminiStats] = useState<GeminiUsageStats>(getGeminiUsageStats());
   const [isTestingGemini, setIsTestingGemini] = useState(false);
   const [geminiTestResult, setGeminiTestResult] = useState<{
@@ -377,14 +386,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [tempRules, setTempRules] = useState(world.customRules || '');
   const [savedSuccess, setSavedSuccess] = useState(false);
 
-  // Synchronize with latest world settings whenever modal opens or world changes
+  // Synchronize with latest world and Gemini settings whenever modal opens or world changes
   useEffect(() => {
     if (isOpen) {
       setTempSetting(world.customSetting || '');
       setTempTone(world.customTone || '');
       setTempRules(world.customRules || '');
+      const currentModel = geminiModel || getStoredGeminiModel();
+      if (!validGeminiModels.includes(currentModel)) {
+        setSelectedGeminiModel('gemini-3.7-flash');
+      } else {
+        setSelectedGeminiModel(currentModel);
+      }
     }
-  }, [isOpen, world]);
+  }, [isOpen, world, geminiModel]);
 
   const [tempTtsProvider, setTempTtsProvider] = useState<TtsProvider>(getStoredTtsProvider());
   const [tempTtsBrowserVoice, setTempTtsBrowserVoice] = useState(getStoredTtsBrowserVoice());
@@ -705,6 +720,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setIsFetchingLmModels(false);
     }
   };
+
 
   const handleTestGeminiConnection = async () => {
     setIsTestingGemini(true);
@@ -1290,6 +1306,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           </div>
 
+
           {/* ================= LM STUDIO (LOCAL AI) PANEL ================= */}
           {!isMobileClient && (
           <div className="bg-gradient-to-r from-emerald-950/70 via-slate-900 to-teal-950/70 border border-emerald-500/50 rounded-2xl p-4.5 space-y-4 shadow-xl">
@@ -1577,6 +1594,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </button>
               </div>
             </div>
+
+
 
             {/* Gemini Model Selector */}
             <div className="space-y-2">

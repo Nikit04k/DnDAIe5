@@ -12,7 +12,13 @@
     "!android/**/*",
     "!capacitor.config.ts",
     "!.git/**/*",
-    "!dist/**/*"
+    "!dist/**/*",
+    "!out/**/*",
+    "!tmp_audio/**/*",
+    "!tools/**/*",
+    "!scripts/**/*",
+    "!*.tsbuildinfo",
+    "!*.log"
   ],
   "extraMetadata": {
     "main": "electron/main.js"
@@ -41,6 +47,8 @@
     "deleteAppDataOnUninstall": false
   },
   "portable": {
-    "artifactName": "${productName}-Portable-${version}.${ext}"
+    "artifactName": "${productName}-Portable-${version}.${ext}",
+    "splashImage": "build/splash.bmp",
+    "requestExecutionLevel": "user"
   }
 }

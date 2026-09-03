@@ -1,6 +1,35 @@
 const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
 const path = require('path');
 const http = require('http');
+const fs = require('fs');
+
+// Portable mode: persist user data (saves, characters, settings) in a 'data' folder alongside the portable exe
+if (process.env.PORTABLE_EXECUTABLE_DIR) {
+  try {
+    const portableDataDir = path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'data');
+    if (!fs.existsSync(portableDataDir)) {
+      fs.mkdirSync(portableDataDir, { recursive: true });
+    }
+    app.setPath('userData', portableDataDir);
+    console.log('[Electron] Portable mode active. User data directory:', portableDataDir);
+  } catch (e) {
+    console.warn('[Electron] Could not configure portable userData directory:', e);
+  }
+}
+
+function getAppIconPath() {
+  const candidates = [
+    path.join(__dirname, '../public/icon.png'),
+    path.join(__dirname, '../build/icon.png'),
+    path.join(__dirname, '../assets/icon.png'),
+  ];
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) return candidate;
+    } catch (e) {}
+  }
+  return undefined;
+}
 
 let mainWindow = null;
 
@@ -29,6 +58,8 @@ async function waitForServer(url, maxRetries = 60) {
   return false;
 }
 
+let internalServerModule = null;
+
 function startInternalServer() {
   try {
     const appDir = app.getAppPath();
@@ -41,7 +72,7 @@ function startInternalServer() {
 
     const serverPath = path.join(appDir, 'server.js');
     console.log('[Electron] Loading internal server from:', serverPath);
-    require(serverPath);
+    internalServerModule = require(serverPath);
   } catch (err) {
     console.error('[Electron] Failed to start internal server:', err);
     dialog.showErrorBox(
@@ -51,7 +82,42 @@ function startInternalServer() {
   }
 }
 
+let isTerminating = false;
+function terminateApp() {
+  if (isTerminating) return;
+  isTerminating = true;
+  console.log('[Electron] Закрытие приложения и выключение сервера...');
+
+  try {
+    if (internalServerModule && typeof internalServerModule.shutdown === 'function') {
+      internalServerModule.shutdown(0);
+    }
+  } catch (e) {}
+
+  try {
+    BrowserWindow.getAllWindows().forEach((win) => {
+      if (!win.isDestroyed()) {
+        win.destroy();
+      }
+    });
+  } catch (e) {}
+
+  try {
+    app.quit();
+  } catch (e) {}
+
+  // Force immediate process exit on Windows to release port 3000 and avoid zombie processes in Task Manager
+  setTimeout(() => {
+    try {
+      app.exit(0);
+    } catch (e) {}
+    process.exit(0);
+  }, 200).unref();
+}
+
 async function createWindow() {
+  const icon = getAppIconPath();
+
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 920,
@@ -59,7 +125,7 @@ async function createWindow() {
     minHeight: 700,
     backgroundColor: '#020617',
     title: 'DnDAIe5 • AI Dungeon Master & Party RPG',
-    icon: path.join(__dirname, '../build/icon.png'),
+    ...(icon ? { icon } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -137,8 +203,13 @@ async function createWindow() {
     return { action: 'deny' };
   });
 
+  mainWindow.on('close', () => {
+    terminateApp();
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
+    terminateApp();
   });
 }
 
@@ -155,7 +226,7 @@ ipcMain.on('window-maximize', () => {
 });
 
 ipcMain.on('window-close', () => {
-  if (mainWindow) mainWindow.close();
+  terminateApp();
 });
 
 ipcMain.handle('get-app-version', () => app.getVersion());
@@ -169,9 +240,15 @@ ipcMain.on('open-external', (event, url) => {
 app.whenReady().then(createWindow);
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+  terminateApp();
+});
+
+app.on('before-quit', () => {
+  terminateApp();
+});
+
+app.on('will-quit', () => {
+  terminateApp();
 });
 
 app.on('activate', () => {
@@ -179,3 +256,8 @@ app.on('activate', () => {
     createWindow();
   }
 });
+
+process.on('SIGINT', () => terminateApp());
+process.on('SIGTERM', () => terminateApp());
+process.on('SIGBREAK', () => terminateApp());
+process.on('SIGHUP', () => terminateApp());

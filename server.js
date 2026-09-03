@@ -33,6 +33,48 @@ const roomState = {
 // Connected sockets map: socketId -> { ws, player }
 const connectedClients = new Map();
 
+let serverInstance = null;
+let wssInstance = null;
+let isShuttingDown = false;
+
+function shutdown(exitCode = 0) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log('\n[DnDAIe5] Завершение работы сервера и освобождение портов...');
+
+  try {
+    for (const [id, client] of connectedClients.entries()) {
+      try {
+        client.ws.terminate();
+      } catch (e) {}
+    }
+    connectedClients.clear();
+  } catch (e) {}
+
+  try {
+    if (wssInstance) {
+      wssInstance.close();
+    }
+  } catch (e) {}
+
+  try {
+    if (serverInstance) {
+      serverInstance.close(() => {
+        process.exit(exitCode);
+      });
+    } else {
+      process.exit(exitCode);
+    }
+  } catch (e) {
+    process.exit(exitCode);
+  }
+
+  // Force exit after 500ms if lingering keep-alive sockets delay graceful close
+  setTimeout(() => {
+    process.exit(exitCode);
+  }, 500).unref();
+}
+
 function broadcast(message, excludeWs = null) {
   const payload = JSON.stringify(message);
   for (const [id, client] of connectedClients.entries()) {
@@ -75,8 +117,30 @@ app.prepare().then(() => {
     const parsedUrl = parse(req.url, true);
     handle(req, res, parsedUrl);
   });
+  serverInstance = server;
 
   const wss = new WebSocketServer({ noServer: true });
+  wssInstance = wss;
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`\n[DnDAIe5 Error] Порт ${port} уже занят другим процессом!`);
+      console.error(`Закройте предыдущую копию приложения или завершите процесс, занимающий порт ${port}.\n`);
+      if (process.versions?.electron) {
+        try {
+          const { dialog } = require('electron');
+          dialog.showErrorBox(
+            'DnDAIe5 — Порт занят',
+            `Порт ${port} уже занят другой запущенной копией игры или другой программой.\n\nПожалуйста, закройте предыдущий процесс DnDAIe5 в Диспетчере задач и повторите запуск.`
+          );
+        } catch (e) {}
+      }
+      process.exit(1);
+    } else {
+      console.error('[DnDAIe5 Server Error]:', err);
+      process.exit(1);
+    }
+  });
 
   server.on('upgrade', (req, socket, head) => {
     const { pathname } = parse(req.url);
@@ -383,4 +447,49 @@ app.prepare().then(() => {
     console.log(`  > WebSocket LAN:    ws://${lanIp}:${port}/ws`);
     console.log(`======================================================\n`);
   });
+
+  // Comprehensive OS & Console Signal Handlers
+  process.on('SIGINT', () => shutdown(0));
+  process.on('SIGTERM', () => shutdown(0));
+  process.on('SIGBREAK', () => shutdown(0)); // Windows Ctrl+Break and console close event
+  process.on('SIGHUP', () => shutdown(0));   // Terminal closed / hung up
+
+  // Only watch standard input in standalone CLI terminal mode, never in Electron or GUI non-TTY
+  try {
+    if (!process.versions?.electron && process.stdin && process.stdin.isTTY && typeof process.stdin.resume === 'function') {
+      process.stdin.resume();
+      process.stdin.on('end', () => shutdown(0));
+      process.stdin.on('close', () => shutdown(0));
+
+      if (process.platform === 'win32') {
+        const readline = require('readline');
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
+        rl.on('SIGINT', () => shutdown(0));
+        rl.on('SIGBREAK', () => shutdown(0));
+        rl.on('close', () => shutdown(0));
+      }
+    }
+  } catch (e) {}
+
+  process.on('uncaughtException', (err) => {
+    if (
+      err?.message?.includes?.('audio') ||
+      err?.message?.includes?.('turnEnded') ||
+      err?.stack?.includes?.('msedge-tts') ||
+      err?.stack?.includes?.('MsEdgeTTS')
+    ) {
+      console.warn('[Handled Uncaught TTS Stream Race]:', err.message);
+      return;
+    }
+    console.error('[Uncaught Exception]:', err);
+  });
 });
+
+module.exports = {
+  shutdown,
+  get server() { return serverInstance; },
+  get wss() { return wssInstance; },
+};
