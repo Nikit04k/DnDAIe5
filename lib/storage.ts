@@ -1,4 +1,4 @@
-import { GameSessionState, CharacterSheet, WorldSettings, ChatMessage, RollRequirement } from '@/types/dnd';
+import { GameSessionState, WorldSettings } from '@/types/dnd';
 
 const STORAGE_KEYS = {
   CURRENT_SESSION: 'dnd_solo_current_session',
@@ -420,6 +420,8 @@ export function getStoredWorldSettings(): WorldSettings {
     customTone: '',
     customRules: '',
     startingScene: '',
+    difficulty: 'standard',
+    xpMultiplier: 1,
   };
   if (typeof window === 'undefined') return defaultWorld;
   try {

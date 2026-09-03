@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { NetworkPlayer, PlayerRoundAction, RollRequirement } from '@/types/dnd';
-import { Shield, Heart, Crown, Dices, Users, CheckCircle2, Clock, Play, Radio } from 'lucide-react';
+import { Shield, Heart, Crown, Dices, Users, Play, Radio } from 'lucide-react';
 
 interface PartyRosterPanelProps {
   players: NetworkPlayer[];

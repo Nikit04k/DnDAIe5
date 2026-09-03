@@ -11,12 +11,16 @@ import {
   formatModifier,
   getSkillModifier,
   getSavingThrowModifier,
-  SKILL_ABILITY_MAP,
   SKILL_RUSSIAN_NAMES,
   ABILITY_FULL_NAMES,
   normalizeRationItem,
   parseItemQuantity,
   formatItemWithCount,
+  getLevelFromXp,
+  calculateHpGainOnLevelUp,
+  isClassSpellcaster,
+  CANTRIP_SUGGESTIONS_BY_CLASS,
+  SPELL_SUGGESTIONS_BY_CLASS,
 } from '@/lib/dndRules';
 import {
   Heart,
@@ -25,24 +29,13 @@ import {
   Footprints,
   Sparkles,
   Coins,
-  Package,
-  Moon,
   Sun,
-  Scroll,
-  Edit3,
-  Check,
-  Trash2,
-  Sword,
-  Shirt,
-  Crosshair,
-  Gem,
-  ArrowRight,
-  FlaskConical,
-  Flame,
-  Utensils,
-  BookOpen,
+  Moon,
+  Plus,
+  ChevronUp,
+  Award,
 } from 'lucide-react';
-import { playDamageSound, playHealSound, playCoinSound, playDiceRollSound } from '@/lib/diceSound';
+import { playDiceRollSound, playHealSound } from '@/lib/diceSound';
 
 interface CharacterSheetProps {
   character: CharacterSheet;
@@ -51,9 +44,10 @@ interface CharacterSheetProps {
   onRollSkill: (skillName: SkillName, modifier: number) => void;
   onRestAction?: (restType: 'short' | 'long') => void;
   onItemUsed?: (itemName: string, narrativeAction: string) => void;
+  onClose?: () => void;
 }
 
-// Helper to determine if an item is consumable/usable (potion, scroll, food, torch, etc.)
+// Helper to determine if an item is consumable or usable from inventory
 export function isConsumableItem(name: string): boolean {
   const lower = name.toLowerCase();
   return (
@@ -61,59 +55,150 @@ export function isConsumableItem(name: string): boolean {
     lower.includes('эликсир') ||
     lower.includes('снадобье') ||
     lower.includes('флакон') ||
-    lower.includes('святая вода') ||
-    lower.includes('яд') ||
     lower.includes('свиток') ||
     lower.includes('рацион') ||
-    lower.includes('сухпаек') ||
-    lower.includes('еда') ||
-    lower.includes('бинт') ||
-    lower.includes('аптечка') ||
+    lower.includes('паек') ||
     lower.includes('факел') ||
-    lower.includes('огниво') ||
-    lower.includes('свеч') ||
-    lower.includes('елей') ||
+    lower.includes('бинт') ||
+    lower.includes('противоядие') ||
+    lower.includes('трава') ||
     lower.includes('мазь') ||
-    lower.includes('настойк') ||
-    lower.includes('травы') ||
-    lower.includes('растени') ||
-    lower.includes('элем') ||
-    lower.includes('пиво') ||
-    lower.includes('вино')
+    lower.includes('бутыль') ||
+    lower.includes('еда') ||
+    lower.includes('вода') ||
+    lower.includes('фляг') ||
+    lower.includes('бурдюк') ||
+    lower.includes('waterskin') ||
+    lower.includes('canteen')
   );
 }
 
-// Helper to determine item slot icon
-function getItemSlotIcon(name: string) {
+// Helper to determine if an item is a water flask / waterskin
+export function isWaterFlask(name: string): boolean {
   const lower = name.toLowerCase();
-  if (lower.includes('зелье') || lower.includes('эликсир') || lower.includes('флакон') || lower.includes('вода') || lower.includes('мазь') || lower.includes('елей')) {
-    return <FlaskConical className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />;
+  return (
+    lower.includes('фляг') ||
+    lower.includes('бурдюк') ||
+    lower.includes('waterskin') ||
+    lower.includes('canteen')
+  );
+}
+
+// Helper to determine if a water flask is currently filled
+export function isFlaskFilled(name: string): boolean {
+  const lower = name.toLowerCase();
+  if (lower.includes('пуст') || lower.includes('не наполнен')) {
+    return false;
   }
-  if (lower.includes('свиток') || lower.includes('гримуар') || lower.includes('книга')) {
-    return <Scroll className="w-3.5 h-3.5 text-purple-400 flex-shrink-0" />;
+  return true; // Defaults to filled when acquired
+}
+
+// Get clean display name of a flask without state suffixes
+export function getFlaskBaseName(name: string): string {
+  return name
+    .replace(/\s*\((?:наполнена|полная|пустая|не наполнена|полный|пустой)\)/gi, '')
+    .trim();
+}
+
+// Helper to determine if an item is reusable upon use (e.g. water flask, waterskin, canteen)
+export function isReusableItem(name: string): boolean {
+  return isWaterFlask(name);
+}
+
+// Helper to determine if an item can be equipped (weapon, armor, shield, apparel)
+export function isEquippableItem(name: string): boolean {
+  const lower = name.toLowerCase();
+  return (
+    // Weapons
+    lower.includes('меч') ||
+    lower.includes('кинжал') ||
+    lower.includes('топор') ||
+    lower.includes('секир') ||
+    lower.includes('молот') ||
+    lower.includes('булав') ||
+    lower.includes('лук') ||
+    lower.includes('арбалет') ||
+    lower.includes('посох') ||
+    lower.includes('жезл') ||
+    lower.includes('рапир') ||
+    lower.includes('сабл') ||
+    lower.includes('копь') ||
+    lower.includes('клинок') ||
+    lower.includes('шпаг') ||
+    lower.includes('дубин') ||
+    lower.includes('дротик') ||
+    lower.includes('алебард') ||
+    lower.includes('пик') ||
+    lower.includes('цеп') ||
+    // Armor & Shields
+    lower.includes('доспех') ||
+    lower.includes('кольчуг') ||
+    lower.includes('панцир') ||
+    lower.includes('латы') ||
+    lower.includes('кожан') ||
+    lower.includes('щит') ||
+    lower.includes('кирас') ||
+    lower.includes('рубах') ||
+    lower.includes('бригандин') ||
+    lower.includes('шлем') ||
+    // Wearables & Accessories
+    lower.includes('плащ') ||
+    lower.includes('манти') ||
+    lower.includes('сапог') ||
+    lower.includes('перчатк') ||
+    lower.includes('наруч') ||
+    lower.includes('кольцо') ||
+    lower.includes('амулет') ||
+    lower.includes('ожерель') ||
+    lower.includes('пояс') ||
+    lower.includes('талисман') ||
+    lower.includes('медальон') ||
+    lower.includes('роба') ||
+    lower.includes('капюшон')
+  );
+}
+
+// Calculate Armor Class (AC) based on equipped items in 5e
+export function calculateEquippedAc(
+  equippedItems: string[],
+  dexMod: number,
+  conMod: number = 0,
+  charClass: string = ''
+): number {
+  let baseAc = 10 + dexMod;
+  if (['Варвар', 'Barbarian'].includes(charClass)) {
+    baseAc = 10 + dexMod + conMod;
   }
-  if (lower.includes('рацион') || lower.includes('сухпаек') || lower.includes('элем') || lower.includes('фляга')) {
-    return <Utensils className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />;
+
+  let hasShield = false;
+
+  for (const item of equippedItems) {
+    const l = item.toLowerCase();
+    if (l.includes('щит') || l.includes('shield')) {
+      hasShield = true;
+      continue;
+    }
+
+    if (l.includes('латы') || l.includes('латный')) {
+      baseAc = 18;
+    } else if (l.includes('наборный')) {
+      baseAc = 17;
+    } else if (l.includes('кольчуг') && !l.includes('рубах')) {
+      baseAc = 16;
+    } else if (l.includes('полулат')) {
+      baseAc = 15 + Math.min(dexMod, 2);
+    } else if (l.includes('панцир') || l.includes('чешуйчат')) {
+      baseAc = 14 + Math.min(dexMod, 2);
+    } else if (l.includes('кольчужная рубах')) {
+      baseAc = 13 + Math.min(dexMod, 2);
+    } else if (l.includes('проклепан')) {
+      baseAc = 12 + dexMod;
+    } else if (l.includes('кожан') || l.includes('доспех')) {
+      baseAc = 11 + dexMod;
+    }
   }
-  if (lower.includes('факел') || lower.includes('огниво') || lower.includes('свеч')) {
-    return <Flame className="w-3.5 h-3.5 text-orange-400 flex-shrink-0" />;
-  }
-  if (lower.includes('меч') || lower.includes('кинжал') || lower.includes('молот') || lower.includes('секира') || lower.includes('посох') || lower.includes('шпага') || lower.includes('рапира') || lower.includes('лук') || lower.includes('арбалет') || lower.includes('топор')) {
-    return <Sword className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />;
-  }
-  if (lower.includes('щит')) {
-    return <Shield className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />;
-  }
-  if (lower.includes('доспех') || lower.includes('кольчуг') || lower.includes('рубах') || lower.includes('камзол') || lower.includes('жилет') || lower.includes('мантия') || lower.includes('чешуй')) {
-    return <Shirt className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />;
-  }
-  if (lower.includes('амулет') || lower.includes('кольцо') || lower.includes('тотем') || lower.includes('символ') || lower.includes('кристалл') || lower.includes('оберег')) {
-    return <Gem className="w-3.5 h-3.5 text-purple-400 flex-shrink-0" />;
-  }
-  if (lower.includes('плащ') || lower.includes('шлем') || lower.includes('сапог') || lower.includes('перчатк')) {
-    return <Sparkles className="w-3.5 h-3.5 text-cyan-400 flex-shrink-0" />;
-  }
-  return <Package className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />;
+
+  return baseAc + (hasShield ? 2 : 0);
 }
 
 export const CharacterSheetView: React.FC<CharacterSheetProps> = ({
@@ -123,681 +208,1041 @@ export const CharacterSheetView: React.FC<CharacterSheetProps> = ({
   onRollSkill,
   onRestAction,
   onItemUsed,
+  onClose,
 }) => {
-  const [activeTab, setActiveTab] = useState<'vitals' | 'skills' | 'equipment' | 'lore'>('vitals');
-  const [isEditingLore, setIsEditingLore] = useState(false);
-  const [usedItemNotice, setUsedItemNotice] = useState<string | null>(null);
+  const [isLevelUpModalOpen, setIsLevelUpModalOpen] = useState(false);
 
-  const equippedList = character.equippedItems || [];
-  const backpackList = (character.inventory || []).map(normalizeRationItem);
+  // Level Up form state
+  const [newCantripInput, setNewCantripInput] = useState('');
+  const [newSpellInput, setNewSpellInput] = useState('');
 
-  // Equip item: move from backpack to equipped (for weapons, armor, etc.)
+  // Add spell/cantrip quick form
+  const [newSpellQuickInput, setNewSpellQuickInput] = useState('');
+  const [isAddingSpell, setIsAddingSpell] = useState(false);
+
+  // Experience and level calculation from 5e rules
+  const xpInfo = getLevelFromXp(character.experience || 0);
+  const canLevelUp = xpInfo.level > character.level;
+
+  const stats = character.stats || { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };
+  const strMod = getAbilityModifier(stats.str);
+  const dexMod = getAbilityModifier(stats.dex);
+  const conMod = getAbilityModifier(stats.con);
+  const intMod = getAbilityModifier(stats.int);
+  const wisMod = getAbilityModifier(stats.wis);
+  const chaMod = getAbilityModifier(stats.cha);
+
+  // Spellcasting modifier
+  const isCaster = isClassSpellcaster(character.class);
+  const castingMod = ['Жрец', 'Cleric', 'Друид', 'Druid', 'Следопыт', 'Ranger'].includes(character.class)
+    ? wisMod
+    : ['Волшебник', 'Wizard'].includes(character.class)
+    ? intMod
+    : chaMod;
+
+  const spellSaveDc = 8 + character.proficiencyBonus + castingMod;
+  const spellAttackBonus = character.proficiencyBonus + castingMod;
+
+  // Passive perception and insight
+  const isPerceptionProf = character.skillProficiencies?.includes('Perception');
+  const isInsightProf = character.skillProficiencies?.includes('Insight');
+  const passivePerception = 10 + wisMod + (isPerceptionProf ? character.proficiencyBonus : 0);
+  const passiveInsight = 10 + wisMod + (isInsightProf ? character.proficiencyBonus : 0);
+
+  // Equip item from inventory
   const handleEquipItem = (itemToEquip: string) => {
+    playDiceRollSound();
     onUpdateCharacter((prev) => {
-      const currentEquipped = prev.equippedItems || [];
-      const updatedInv = (prev.inventory || []).map(normalizeRationItem).filter((it) => it !== itemToEquip);
-      return {
-        ...prev,
-        inventory: updatedInv,
-        equippedItems: [...currentEquipped, itemToEquip],
-      };
-    });
-  };
-
-  // Unequip item: move from equipped to backpack
-  const handleUnequipItem = (itemToUnequip: string) => {
-    onUpdateCharacter((prev) => {
-      const currentEquipped = prev.equippedItems || [];
-      const updatedEquipped = currentEquipped.filter((it) => it !== itemToUnequip);
+      const parsed = parseItemQuantity(itemToEquip);
       const currentInv = (prev.inventory || []).map(normalizeRationItem);
-      return {
-        ...prev,
-        equippedItems: updatedEquipped,
-        inventory: [...currentInv, itemToUnequip],
-      };
-    });
-  };
+      const idx = currentInv.findIndex((it) => {
+        const p = parseItemQuantity(it);
+        return p.baseName.toLowerCase() === parsed.baseName.toLowerCase();
+      });
 
-  // Use / Consume item (potions, scrolls, food, rations, torches, candles, holy water, etc.)
-  const handleUseItem = (itemToUse: string, index: number) => {
-    const parsed = parseItemQuantity(itemToUse);
-    const baseName = parsed.baseName;
-    const currentCount = parsed.count;
-    const lower = baseName.toLowerCase();
-
-    let healAmount = 0;
-    let effectMessage = `Игрок применил: ${baseName}`;
-    const remainingCount = currentCount > 1 ? currentCount - 1 : 0;
-    const nextItemState = currentCount > 1 ? formatItemWithCount(baseName, remainingCount) : null;
-
-    if (lower.includes('зелье лечения') || lower.includes('лечения') || lower.includes('исцелени') || lower.includes('аптечка')) {
-      // Roll 2d4 + 2
-      const d1 = Math.floor(Math.random() * 4) + 1;
-      const d2 = Math.floor(Math.random() * 4) + 1;
-      healAmount = d1 + d2 + 2;
-      effectMessage = remainingCount > 0
-        ? `Выпито 1 зелье лечения: ${baseName} (+${healAmount} HP, осталось: ${remainingCount} шт.)`
-        : `Выпито зелье лечения: ${baseName} (+${healAmount} HP)`;
-      playHealSound();
-    } else if (lower.includes('рацион') || lower.includes('сухпаек') || lower.includes('еда')) {
-      healAmount = 2;
-      effectMessage = remainingCount > 0
-        ? `Съеден сухпаек (1 шт. на 1 день, осталось: ${remainingCount} шт.) (+2 HP)`
-        : `Съеден последний сухпаек (1 шт. на 1 день) (+2 HP)`;
-      playHealSound();
-    } else if (lower.includes('факел')) {
-      effectMessage = remainingCount > 0
-        ? `Зажжен 1 факел (освещает 20 фт. на 1 час, осталось: ${remainingCount} шт.)`
-        : `Зажжен последний факел (освещает 20 фт. на 1 час)`;
-      playDiceRollSound();
-    } else if (lower.includes('свеч')) {
-      effectMessage = remainingCount > 0
-        ? `Зажжена 1 свеча (осталось: ${remainingCount} шт.)`
-        : `Зажжена свеча`;
-      playDiceRollSound();
-    } else if (lower.includes('святая вода')) {
-      effectMessage = remainingCount > 0
-        ? `Использован 1 флакон святой воды (осталось: ${remainingCount} шт.)`
-        : `Использован флакон святой воды`;
-      playDiceRollSound();
-    } else {
-      effectMessage = remainingCount > 0
-        ? `Использовано: ${baseName} (1 шт., осталось: ${remainingCount} шт.)`
-        : `Использован предмет: ${baseName}`;
-      playDiceRollSound();
-    }
-
-    // Apply HP changes & update consumed item in backpack
-    onUpdateCharacter((prev) => {
-      const currentInv = (prev.inventory || []).map(normalizeRationItem);
-      let newInv: string[];
-      if (nextItemState) {
-        newInv = [...currentInv];
-        newInv[index] = nextItemState;
+      let nextInv = [...currentInv];
+      if (idx !== -1) {
+        const p = parseItemQuantity(currentInv[idx]);
+        const nextCount = p.count - 1;
+        if (nextCount > 0) {
+          nextInv[idx] = formatItemWithCount(p.baseName, nextCount);
+        } else {
+          nextInv = nextInv.filter((_, i) => i !== idx);
+        }
       } else {
-        newInv = currentInv.filter((_, i) => i !== index);
+        nextInv = nextInv.filter((it) => it !== itemToEquip);
       }
-      const newHp = healAmount > 0 ? Math.min(prev.maxHp, prev.currentHp + healAmount) : prev.currentHp;
+
+      const nextEquipped = [...(prev.equippedItems || []), parsed.baseName];
+      const nextAc = calculateEquippedAc(nextEquipped, dexMod, conMod, prev.class);
+
       return {
         ...prev,
-        currentHp: newHp,
-        inventory: newInv,
+        inventory: nextInv,
+        equippedItems: nextEquipped,
+        ac: nextAc > 0 ? nextAc : prev.ac,
       };
     });
 
-    setUsedItemNotice(effectMessage);
-    setTimeout(() => setUsedItemNotice(null), 4000);
-
-    // Notify DM & Chat so neural network sees and reacts to item usage of 1 piece
     if (onItemUsed) {
-      const singleItemNarrative = currentCount > 1 ? `${baseName} (1 шт.)` : baseName;
-      onItemUsed(singleItemNarrative, effectMessage);
+      onItemUsed(itemToEquip, `🛡️ Я экипирую / надеваю: «${itemToEquip}».`);
     }
   };
 
-  // Remove backpack item
-  const handleRemoveBackpackItem = (index: number) => {
-    onUpdateCharacter((prev) => {
-      const currentInv = (prev.inventory || []).map(normalizeRationItem);
-      return {
-        ...prev,
-        inventory: currentInv.filter((_, i) => i !== index),
-      };
-    });
-  };
-
-  // Remove equipped item
-  const handleRemoveEquippedItem = (index: number) => {
+  // Unequip item back into inventory
+  const handleUnequipItem = (itemToUnequip: string) => {
+    playDiceRollSound();
     onUpdateCharacter((prev) => {
       const currentEquipped = prev.equippedItems || [];
+      const idx = currentEquipped.findIndex(
+        (it) => it.toLowerCase().trim() === itemToUnequip.toLowerCase().trim()
+      );
+      const nextEquipped = idx !== -1
+        ? currentEquipped.filter((_, i) => i !== idx)
+        : currentEquipped.filter((it) => it !== itemToUnequip);
+
+      const currentInv = (prev.inventory || []).map(normalizeRationItem);
+      const invIdx = currentInv.findIndex((it) => {
+        const p = parseItemQuantity(it);
+        return p.baseName.toLowerCase() === itemToUnequip.toLowerCase();
+      });
+
+      let nextInv = [...currentInv];
+      if (invIdx !== -1) {
+        const p = parseItemQuantity(currentInv[invIdx]);
+        nextInv[invIdx] = formatItemWithCount(p.baseName, p.count + 1);
+      } else {
+        nextInv.push(itemToUnequip);
+      }
+
+      const nextAc = calculateEquippedAc(nextEquipped, dexMod, conMod, prev.class);
+
       return {
         ...prev,
-        equippedItems: currentEquipped.filter((_, i) => i !== index),
+        inventory: nextInv,
+        equippedItems: nextEquipped,
+        ac: nextAc > 0 ? nextAc : prev.ac,
       };
+    });
+
+    if (onItemUsed) {
+      onItemUsed(itemToUnequip, `🎒 Я снимаю «${itemToUnequip}» и убираю в рюкзак.`);
+    }
+  };
+
+  // Drink from water flask (empties flask, does not disappear)
+  const handleDrinkFlask = (itemName: string) => {
+    playDiceRollSound();
+    const baseName = getFlaskBaseName(itemName);
+    const emptyName = `${baseName} (пустая)`;
+
+    onUpdateCharacter((prev) => {
+      const nextInv = (prev.inventory || []).map((it) => (it === itemName ? emptyName : it));
+      const nextEquipped = (prev.equippedItems || []).map((it) => (it === itemName ? emptyName : it));
+      return {
+        ...prev,
+        inventory: nextInv,
+        equippedItems: nextEquipped,
+      };
+    });
+
+    if (onItemUsed) {
+      onItemUsed(itemName, `💧 Я делаю освежающий глоток чистой воды из «${baseName}», утоляя жажду. Фляга опустела.`);
+    }
+  };
+
+  // Refill water flask with clean water
+  const handleRefillFlask = (itemName: string) => {
+    playDiceRollSound();
+    const baseName = getFlaskBaseName(itemName);
+    const filledName = `${baseName} (наполнена)`;
+
+    onUpdateCharacter((prev) => {
+      const nextInv = (prev.inventory || []).map((it) => (it === itemName ? filledName : it));
+      const nextEquipped = (prev.equippedItems || []).map((it) => (it === itemName ? filledName : it));
+      return {
+        ...prev,
+        inventory: nextInv,
+        equippedItems: nextEquipped,
+      };
+    });
+
+    if (onItemUsed) {
+      onItemUsed(filledName, `🚰 Я наполняю походную флягу «${baseName}» свежей, чистой водой.`);
+    }
+  };
+
+  // Equipment / Consumable use
+  const handleConsumeItem = (itemName: string) => {
+    if (isWaterFlask(itemName)) {
+      if (isFlaskFilled(itemName)) {
+        handleDrinkFlask(itemName);
+      } else {
+        handleRefillFlask(itemName);
+      }
+      return;
+    }
+
+    const lower = itemName.toLowerCase();
+    let hpHealed = 0;
+
+    if (lower.includes('зелье лечения') || lower.includes('зелье здоровья') || lower.includes('potion of healing')) {
+      if (lower.includes('отличное') || lower.includes('superior')) {
+        hpHealed = Math.floor(Math.random() * 4 + 1) * 8 + 8;
+      } else if (lower.includes('большее') || lower.includes('greater')) {
+        hpHealed = Math.floor(Math.random() * 4 + 1) * 4 + 4;
+      } else {
+        hpHealed = (Math.floor(Math.random() * 4 + 1) + Math.floor(Math.random() * 4 + 1)) + 2;
+      }
+      playHealSound();
+    } else {
+      playDiceRollSound();
+    }
+
+    if (onItemUsed) {
+      const healText = hpHealed > 0 ? ` восстанавливая **+${hpHealed} HP**` : '';
+      onItemUsed(itemName, `✨ Я применяю «${itemName}»${healText}.`);
+    }
+
+    onUpdateCharacter((prev) => {
+      const parsed = parseItemQuantity(itemName);
+      const currentInv = (prev.inventory || []).map(normalizeRationItem);
+      const idx = currentInv.findIndex((it) => {
+        const p = parseItemQuantity(it);
+        return p.baseName.toLowerCase() === parsed.baseName.toLowerCase();
+      });
+      if (idx === -1) return prev;
+
+      const p = parseItemQuantity(currentInv[idx]);
+      const nextCount = p.count - 1;
+      let nextInv = [...currentInv];
+      if (nextCount > 0) {
+        nextInv[idx] = formatItemWithCount(p.baseName, nextCount);
+      } else {
+        nextInv = nextInv.filter((_, i) => i !== idx);
+      }
+
+      const nextHp = hpHealed > 0 ? Math.min(prev.maxHp, prev.currentHp + hpHealed) : prev.currentHp;
+      return { ...prev, inventory: nextInv, currentHp: nextHp };
     });
   };
 
-  // Short Rest Trigger (narrated by DM)
-  const handleShortRest = () => {
-    if (onRestAction) {
-      onRestAction('short');
-    } else {
-      const conMod = getAbilityModifier(character.stats.con);
-      const hitDieSize =
-        character.class.toLowerCase().includes('воин') ||
-        character.class.toLowerCase().includes('fighter') ||
-        character.class.toLowerCase().includes('паладин') ||
-        character.class.toLowerCase().includes('paladin')
-          ? 10
-          : 8;
-      const roll = Math.floor(Math.random() * hitDieSize) + 1;
-      const healAmount = Math.max(1, roll + conMod);
-
-      playHealSound();
-      onUpdateCharacter((prev) => ({
-        ...prev,
-        currentHp: Math.min(prev.maxHp, prev.currentHp + healAmount),
-        hitDiceCurrent: Math.max(0, (prev.hitDiceCurrent ?? 1) - 1),
-      }));
+  // Cast Spell
+  const handleCastSpell = (spellName: string) => {
+    playDiceRollSound();
+    if (onItemUsed) {
+      const text = `✨ **Сотворение заклинания «${spellName}»**: DC спасброска: ${spellSaveDc}, Бонус атаки: +${spellAttackBonus}.`;
+      onItemUsed(spellName, text);
     }
   };
 
-  // Long Rest Trigger (narrated by DM)
-  const handleLongRest = () => {
-    if (onRestAction) {
-      onRestAction('long');
-    } else {
-      playHealSound();
-      onUpdateCharacter((prev) => ({
-        ...prev,
-        currentHp: prev.maxHp,
-        tempHp: 0,
-        hitDiceCurrent: prev.hitDiceMax || prev.level || 1,
-        deathSaves: { successes: 0, failures: 0 },
-      }));
-    }
+  // Add spell
+  const handleAddSpellSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newSpellQuickInput.trim()) return;
+    const val = newSpellQuickInput.trim();
+    onUpdateCharacter((prev) => ({
+      ...prev,
+      spells: [...(prev.spells || []), val],
+    }));
+    setNewSpellQuickInput('');
+    setIsAddingSpell(false);
   };
 
-  const hpPercentage = Math.round((character.currentHp / (character.maxHp || 1)) * 100);
+  // Level Up Confirmation
+  const handleConfirmLevelUp = () => {
+    const targetLevel = xpInfo.level;
+    const hpGain = calculateHpGainOnLevelUp(character.class, stats.con);
+
+    onUpdateCharacter((prev) => {
+      const nextSpells = [...(prev.spells || [])];
+      const nextCantrips = [...(prev.cantrips || [])];
+
+      if (newSpellInput.trim()) {
+        nextSpells.push(newSpellInput.trim());
+      }
+      if (newCantripInput.trim()) {
+        nextCantrips.push(newCantripInput.trim());
+      }
+
+      return {
+        ...prev,
+        level: targetLevel,
+        proficiencyBonus: xpInfo.proficiencyBonus,
+        maxHp: prev.maxHp + hpGain,
+        currentHp: prev.currentHp + hpGain,
+        cantrips: nextCantrips,
+        spells: nextSpells,
+      };
+    });
+
+    setIsLevelUpModalOpen(false);
+    setNewCantripInput('');
+    setNewSpellInput('');
+  };
+
+  // Suggested cantrips and spells for current class
+  const classCantripSuggestions = CANTRIP_SUGGESTIONS_BY_CLASS[character.class] || [];
+  const classSpellSuggestions = SPELL_SUGGESTIONS_BY_CLASS[character.class] || [];
+
+  // Currently equipped items (Armor, Shield, Weapons, Accessories)
+  const equippedGearList = character.equippedItems || [];
 
   return (
-    <div className="flex flex-col h-full bg-slate-950 border-r border-slate-800/80">
-      {/* Character Header Banner */}
-      <div className="p-4 border-b border-slate-800 bg-gradient-to-b from-slate-900/90 to-slate-950/40">
-        <div className="flex items-start justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="font-cinzel text-lg font-bold text-amber-300 truncate max-w-[180px] sm:max-w-[220px]">
-                {character.name}
-              </h2>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold">
-                Ур. {character.level}
-              </span>
-            </div>
-            <p className="text-xs text-slate-400 font-medium mt-0.5">
-              {character.race} • {character.class}
-            </p>
-          </div>
+    <div className="w-full bg-[#110e0c] text-[#2c1810] font-serif-vintage select-none flex flex-col items-center justify-start py-4 px-2 sm:px-6 relative overflow-x-hidden">
+      {/* Antique Parchment Outer Container with Gold Border */}
+      <div className="w-full max-w-5xl rounded-3xl bg-gradient-to-b from-[#fbf6ea] via-[#f7f2e4] to-[#ebdcc4] p-3 sm:p-5 shadow-2xl border-4 border-[#8f6d33] relative">
 
-          <div className="flex flex-col items-end">
-            <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
-              Бонус мастерства
-            </span>
-            <span className="text-sm font-bold text-amber-400 font-cinzel">
-              +{character.proficiencyBonus || 2}
-            </span>
-          </div>
-        </div>
+        {/* Close / Collapse Button at Top Right */}
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="absolute top-3.5 right-3.5 px-3 py-1.5 rounded-full bg-[#3a2212]/90 hover:bg-[#27150a] border border-amber-400/60 text-amber-200 text-xs font-cinzel font-bold flex items-center gap-1 cursor-pointer transition shadow-md z-30"
+            title="Свернуть лист персонажа"
+          >
+            <ChevronUp className="w-4 h-4" />
+            <span className="hidden sm:inline">Свернуть лист</span>
+          </button>
+        )}
 
-        {/* Tab Navigation */}
-        <div className="grid grid-cols-4 gap-1 mt-3 bg-slate-950/80 p-1 rounded-xl border border-slate-800/80">
-          <button
-            onClick={() => setActiveTab('vitals')}
-            className={`py-1.5 text-[11px] font-semibold rounded-lg transition cursor-pointer ${
-              activeTab === 'vitals'
-                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Статы
-          </button>
-          <button
-            onClick={() => setActiveTab('skills')}
-            className={`py-1.5 text-[11px] font-semibold rounded-lg transition cursor-pointer ${
-              activeTab === 'skills'
-                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Навыки
-          </button>
-          <button
-            onClick={() => setActiveTab('equipment')}
-            className={`py-1.5 text-[11px] font-semibold rounded-lg transition cursor-pointer ${
-              activeTab === 'equipment'
-                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Вещи ({equippedList.length + backpackList.length})
-          </button>
-          <button
-            onClick={() => setActiveTab('lore')}
-            className={`py-1.5 text-[11px] font-semibold rounded-lg transition cursor-pointer ${
-              activeTab === 'lore'
-                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Лор героя
-          </button>
-        </div>
-      </div>
+        {/* =========================================================
+            ORNATE PARCHMENT RIBBON (CHARACTER & XP INFO)
+            ========================================================= */}
+        <div className="max-w-3xl mx-auto mt-1 mb-5">
+          <div className="parchment-ribbon p-3 sm:p-4 text-center relative border-2 border-[#7c5a2c]">
+            {/* Central Character Name */}
+            <h1 className="font-cinzel text-xl sm:text-3xl font-extrabold tracking-wider text-[#24140b] drop-shadow-sm">
+              {character.name}
+            </h1>
 
-      {/* Notice Toast for Item Usage */}
-      {usedItemNotice && (
-        <div className="mx-3 mt-2 p-2 rounded-xl bg-emerald-950/90 border border-emerald-500/50 text-emerald-300 text-xs font-semibold flex items-center gap-2 animate-fadeIn shadow-sm">
-          <FlaskConical className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-          <span>{usedItemNotice}</span>
-        </div>
-      )}
-
-      {/* Main Tab Content Container */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {/* TAB 1: VITALS & STATS + BACKPACK (UN-EQUIPPED) & GOLD */}
-        {activeTab === 'vitals' && (
-          <>
-            {/* HP & Health Meter */}
-            <div className="bg-slate-900/90 rounded-xl p-3.5 border border-slate-800 space-y-2.5 shadow-sm">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  <Heart className="w-4 h-4 text-red-500 fill-red-500/30" />
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                    Очки Здоровья (HP)
-                  </span>
-                </div>
-                <div className="text-sm font-extrabold text-slate-100">
-                  <span className={character.currentHp < character.maxHp * 0.3 ? 'text-red-400' : 'text-emerald-400'}>
-                    {character.currentHp}
-                  </span>
-                  <span className="text-slate-500"> / {character.maxHp}</span>
-                  {character.tempHp && character.tempHp > 0 && (
-                    <span className="text-cyan-400 text-xs font-semibold ml-1">
-                      (+{character.tempHp} вр.)
-                    </span>
-                  )}
-                </div>
+            {/* Left & Right Ribbon Wings */}
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] sm:text-xs text-[#4a2e16] font-semibold mt-1 border-t border-[#8c6a38]/40 pt-1.5 px-3 sm:px-6">
+              {/* Left Tail Info */}
+              <div className="flex items-center gap-3">
+                <span>Раса: <strong>{character.race}</strong></span>
+                <span>•</span>
+                <span>Мировоззрение: <strong>{character.alignment || 'Нейтральный'}</strong></span>
+                <span>•</span>
+                <span>Предыстория: <strong>{character.background || 'Странник'}</strong></span>
               </div>
 
-              {/* Progress Bar */}
-              <div className="h-2.5 w-full bg-slate-950 rounded-full overflow-hidden border border-slate-800">
-                <div
-                  className={`h-full transition-all duration-300 ${
-                    hpPercentage > 50
-                      ? 'bg-gradient-to-r from-emerald-500 to-green-400'
-                      : hpPercentage > 25
-                      ? 'bg-gradient-to-r from-amber-500 to-yellow-400'
-                      : 'bg-gradient-to-r from-red-600 to-red-500'
-                  }`}
-                  style={{ width: `${Math.max(0, Math.min(100, hpPercentage))}%` }}
-                />
-              </div>
-            </div>
-
-            {/* Combat Stats Grid (AC, Speed, Initiative) */}
-            <div className="grid grid-cols-3 gap-2">
-              <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-2.5 text-center shadow-sm">
-                <div className="flex items-center justify-center gap-1 text-slate-400 mb-0.5">
-                  <Shield className="w-3.5 h-3.5 text-blue-400" />
-                  <span className="text-[10px] uppercase font-bold">Броня (AC)</span>
-                </div>
-                <span className="text-base font-bold text-slate-100">{character.ac}</span>
-              </div>
-
-              <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-2.5 text-center shadow-sm">
-                <div className="flex items-center justify-center gap-1 text-slate-400 mb-0.5">
-                  <Footprints className="w-3.5 h-3.5 text-emerald-400" />
-                  <span className="text-[10px] uppercase font-bold">Скорость</span>
-                </div>
-                <span className="text-base font-bold text-slate-100">{character.speed || 30} фт</span>
-              </div>
-
-              <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-2.5 text-center shadow-sm">
-                <div className="flex items-center justify-center gap-1 text-slate-400 mb-0.5">
-                  <Zap className="w-3.5 h-3.5 text-amber-400" />
-                  <span className="text-[10px] uppercase font-bold">Инициатива</span>
-                </div>
-                <span className="text-base font-bold text-slate-100">
-                  {formatModifier(getAbilityModifier(character.stats.dex))}
+              {/* Right Tail Info */}
+              <div className="flex items-center gap-3">
+                <span>Класс: <strong className="text-amber-900">{character.class}</strong></span>
+                <span>•</span>
+                <span className="bg-amber-900/10 px-2 py-0.5 rounded-full border border-amber-900/30">
+                  Уровень: <strong>{character.level}</strong>
                 </span>
               </div>
             </div>
 
-            {/* Ability Scores Grid */}
-            <div className="space-y-1.5">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block px-1">
-                Базовые Характеристики (клик для броска d20)
-              </span>
-              <div className="grid grid-cols-3 gap-2">
-                {(Object.keys(character.stats) as AbilityScoreKey[]).map((statKey) => {
-                  const score = character.stats[statKey];
-                  const mod = getAbilityModifier(score);
-                  const isProficientSave = character.savingThrowProficiencies?.includes(statKey);
-                  const saveMod = getSavingThrowModifier(character, statKey);
+            {/* D&D 5e Experience Progress Bar */}
+            <div className="mt-2.5 pt-2 border-t border-[#8c6a38]/30 px-3 sm:px-8">
+              <div className="flex items-center justify-between text-[10px] sm:text-[11px] font-bold text-[#442813] mb-1">
+                <div className="flex items-center gap-1.5">
+                  <Award className="w-3.5 h-3.5 text-amber-700" />
+                  <span>Опыт (XP): {character.experience || 0} / {xpInfo.nextLevelXp}</span>
+                  {character.xpMultiplier && character.xpMultiplier !== 1 && (
+                    <span className="text-[9px] px-1.5 py-0.2 bg-amber-600/20 text-amber-900 rounded border border-amber-700/30">
+                      x{character.xpMultiplier} XP
+                    </span>
+                  )}
+                </div>
+                <span>{xpInfo.progressPercent}% до {character.level + 1} ур.</span>
+              </div>
 
-                  return (
-                    <button
-                      key={statKey}
-                      onClick={() => onRollStat(statKey, ABILITY_FULL_NAMES[statKey].ru, mod)}
-                      className="bg-slate-900/90 hover:bg-slate-850 border border-slate-800 hover:border-amber-500/50 rounded-xl p-2 text-center transition group cursor-pointer shadow-sm relative overflow-hidden"
-                    >
-                      <span className="text-[10px] uppercase font-extrabold text-slate-400 group-hover:text-amber-400 block">
-                        {statKey.toUpperCase()}
-                      </span>
-                      <span className="text-lg font-black text-amber-300 font-cinzel block my-0.5">
-                        {formatModifier(mod)}
-                      </span>
-                      <span className="text-[10px] text-slate-500 block font-medium">Спас: {formatModifier(saveMod)}</span>
-                      {isProficientSave && (
-                        <div className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-400" />
-                      )}
-                    </button>
-                  );
-                })}
+              <div className="w-full h-2.5 bg-[#d9c7a5] rounded-full overflow-hidden border border-[#8a6833] p-0.5 shadow-inner">
+                <div
+                  className="h-full bg-gradient-to-r from-amber-600 to-amber-400 rounded-full transition-all duration-500 shadow-sm"
+                  style={{ width: `${xpInfo.progressPercent}%` }}
+                />
+              </div>
+
+              {/* Level Up Trigger Badge */}
+              {canLevelUp && (
+                <div className="mt-2 flex items-center justify-center">
+                  <button
+                    type="button"
+                    onClick={() => setIsLevelUpModalOpen(true)}
+                    className="px-4 py-1.5 bg-gradient-to-r from-amber-600 via-amber-500 to-amber-600 hover:from-amber-500 hover:to-amber-400 text-slate-950 font-cinzel font-bold text-xs rounded-full shadow-lg border border-amber-300 flex items-center gap-1.5 animate-level-up cursor-pointer"
+                  >
+                    <Sparkles className="w-4 h-4 text-slate-950" />
+                    <span>ПОВЫСИТЬ УРОВЕНЬ ДО {xpInfo.level}! (Доступны новые силы)</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* =========================================================
+            3. MAIN 3-COLUMN PARCHMENT SHEET LAYOUT (AS IN REFERENCE)
+            ========================================================= */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+
+          {/* -----------------------------------------------------
+              COLUMN 1: PROFICIENCY, ABILITY SCORES, SKILLS (4 Cols)
+              ----------------------------------------------------- */}
+          <div className="lg:col-span-4 space-y-4">
+            {/* Top 4 Circular Seals (Proficiency, Inspiration, Passive Perception, Passive Insight) */}
+            <div className="grid grid-cols-4 gap-2 text-center">
+              <div className="parchment-card p-2 flex flex-col items-center justify-center">
+                <span className="text-[9px] uppercase font-bold text-[#6d4d29] leading-tight">Бонус</span>
+                <span className="font-cinzel text-lg font-extrabold text-[#2a1810]">+{character.proficiencyBonus}</span>
+                <span className="text-[8px] text-[#7a5b35]">Мастерство</span>
+              </div>
+
+              <div
+                onClick={() => onUpdateCharacter((prev) => ({ ...prev, tempHp: prev.tempHp > 0 ? 0 : 5 }))}
+                className="parchment-card p-2 flex flex-col items-center justify-center cursor-pointer hover:border-amber-700 transition"
+                title="Вдохновение от Мастера (Inspiration)"
+              >
+                <span className="text-[9px] uppercase font-bold text-[#6d4d29] leading-tight">Вдохн.</span>
+                <Sparkles className="w-5 h-5 text-amber-700 my-0.5" />
+                <span className="text-[8px] text-[#7a5b35]">D&D 5e</span>
+              </div>
+
+              <div className="parchment-card p-2 flex flex-col items-center justify-center" title="Пассивная внимательность">
+                <span className="text-[9px] uppercase font-bold text-[#6d4d29] leading-tight">Вним.</span>
+                <span className="font-cinzel text-lg font-extrabold text-[#2a1810]">{passivePerception}</span>
+                <span className="text-[8px] text-[#7a5b35]">Пассивная</span>
+              </div>
+
+              <div className="parchment-card p-2 flex flex-col items-center justify-center" title="Пассивная проницательность">
+                <span className="text-[9px] uppercase font-bold text-[#6d4d29] leading-tight">Прониц.</span>
+                <span className="font-cinzel text-lg font-extrabold text-[#2a1810]">{passiveInsight}</span>
+                <span className="text-[8px] text-[#7a5b35]">Пассивная</span>
               </div>
             </div>
 
-            {/* ================= BACKPACK & GOLD ================= */}
-            <div className="bg-slate-900/90 rounded-xl p-3.5 border border-slate-800 space-y-3 shadow-sm">
-              <div className="flex items-center justify-between pb-1 border-b border-slate-800/80">
-                <div className="flex items-center gap-2">
-                  <Package className="w-4 h-4 text-amber-400" />
-                  <span className="text-xs font-bold text-amber-300 uppercase tracking-wider">
-                    Рюкзак & Золото
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5 bg-amber-500/10 px-2 py-0.5 rounded-lg border border-amber-500/30 text-amber-300 text-xs font-bold font-mono">
-                  <Coins className="w-3.5 h-3.5 text-amber-400" />
-                  <span>{character.gold || 0} GP</span>
-                </div>
+            {/* 6 Circular Ability Badges with Saving Throws & Associated Skills */}
+            <div className="parchment-card p-3 space-y-3">
+              <h3 className="font-cinzel text-xs font-bold text-[#442813] uppercase tracking-wider text-center border-b border-[#8c6a38]/30 pb-1">
+                Характеристики и Спасброски
+              </h3>
+
+              {([
+                { key: 'str', label: 'СИЛА', score: stats.str, mod: strMod, skills: ['Athletics'] as SkillName[] },
+                { key: 'dex', label: 'ЛОВКОСТЬ', score: stats.dex, mod: dexMod, skills: ['Acrobatics', 'Sleight of Hand', 'Stealth'] as SkillName[] },
+                { key: 'con', label: 'ТЕЛОСЛОЖЕНИЕ', score: stats.con, mod: conMod, skills: [] as SkillName[] },
+                { key: 'int', label: 'ИНТЕЛЛЕКТ', score: stats.int, mod: intMod, skills: ['Arcana', 'History', 'Investigation', 'Nature', 'Religion'] as SkillName[] },
+                { key: 'wis', label: 'МУДРОСТЬ', score: stats.wis, mod: wisMod, skills: ['Animal Handling', 'Insight', 'Medicine', 'Perception', 'Survival'] as SkillName[] },
+                { key: 'cha', label: 'ХАРИЗМА', score: stats.cha, mod: chaMod, skills: ['Deception', 'Intimidation', 'Performance', 'Persuasion'] as SkillName[] },
+              ] as const).map((stat) => {
+                const isSaveProf = character.savingThrowProficiencies?.includes(stat.key);
+                const saveMod = getSavingThrowModifier(character, stat.key);
+
+                return (
+                  <div key={stat.key} className="flex items-start gap-2.5 pt-1 border-b border-[#8c6a38]/20 pb-2">
+                    {/* Circle Ability Seal */}
+                    <button
+                      type="button"
+                      onClick={() => onRollStat(stat.key, ABILITY_FULL_NAMES[stat.key].ru, stat.mod)}
+                      className="w-12 h-12 rounded-full bg-[#fbf6ea] border-2 border-[#8a6833] flex flex-col items-center justify-center shadow-md hover:bg-amber-100 hover:scale-105 transition cursor-pointer flex-shrink-0"
+                      title={`Нажмите, чтобы сделать проверку ${stat.label}`}
+                    >
+                      <span className="text-[9px] font-bold text-[#5c3c1e]">{stat.label.substring(0, 3)}</span>
+                      <span className="font-cinzel text-xs font-extrabold text-[#2a1810]">{stat.score}</span>
+                      <span className="text-[8px] font-bold text-amber-800 leading-none">{formatModifier(stat.mod)}</span>
+                    </button>
+
+                    {/* Saving Throw & Skills List */}
+                    <div className="flex-1 min-w-0 text-[11px]">
+                      {/* Saving Throw */}
+                      <div
+                        onClick={() => onRollStat(stat.key, `Спасбросок (${stat.label})`, saveMod)}
+                        className="flex items-center gap-1.5 cursor-pointer hover:text-amber-800 transition py-0.5"
+                        title="Нажмите для спасброска"
+                      >
+                        <span className={`w-2.5 h-2.5 rounded-sm border border-[#7a5b35] flex items-center justify-center text-[8px] ${isSaveProf ? 'bg-[#7a5b35] text-amber-100' : ''}`}>
+                          {isSaveProf ? '◆' : ''}
+                        </span>
+                        <span className="font-bold text-[#3d2412]">Спасбросок: {formatModifier(saveMod)}</span>
+                      </div>
+
+                      {/* Associated Skills */}
+                      {stat.skills.map((sk) => {
+                        const isProf = character.skillProficiencies?.includes(sk);
+                        const skMod = getSkillModifier(character, sk);
+                        return (
+                          <div
+                            key={sk}
+                            onClick={() => onRollSkill(sk, skMod)}
+                            className="flex items-center justify-between text-[10px] text-[#4f341d] hover:bg-[#ebdcc4]/60 px-1 rounded cursor-pointer transition"
+                            title={`Бросок навыка ${SKILL_RUSSIAN_NAMES[sk]}`}
+                          >
+                            <span className="flex items-center gap-1 truncate">
+                              <span className={`w-2 h-2 rounded-full border border-[#8a6833] ${isProf ? 'bg-[#8a6833]' : ''}`} />
+                              <span className={isProf ? 'font-bold text-[#2a1810]' : ''}>{SKILL_RUSSIAN_NAMES[sk]}</span>
+                            </span>
+                            <span className="font-bold text-amber-900 shrink-0">{formatModifier(skMod)}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Racial Traits & Languages Card */}
+            <div className="parchment-card p-3 space-y-2 text-xs">
+              <h4 className="font-cinzel text-xs font-bold text-[#442813] uppercase tracking-wider border-b border-[#8c6a38]/30 pb-1">
+                Языки и Владения
+              </h4>
+              <p className="text-[11px] text-[#4a2e16] leading-relaxed">
+                <strong>Языки:</strong> Общий, {character.race === 'Эльф' ? 'Эльфийский' : character.race === 'Дварф' ? 'Дварфский' : 'Орочий'}
+              </p>
+              <p className="text-[11px] text-[#4a2e16] leading-relaxed">
+                <strong>Доспехи и Оружие:</strong> Простое и воинское оружие, легкие и средние доспехи, щиты.
+              </p>
+            </div>
+          </div>
+
+          {/* -----------------------------------------------------
+              COLUMN 2: COMBAT, HP, ATTACKS, SPELLS, EQUIPMENT (5 Cols)
+              ----------------------------------------------------- */}
+          <div className="lg:col-span-5 space-y-4">
+            {/* AC, Initiative, Speed (3 Boxes) */}
+            <div className="grid grid-cols-3 gap-2.5 text-center">
+              {/* Shield Plaque AC */}
+              <div className="parchment-card p-2 flex flex-col items-center justify-center border-2 border-[#8c6a38] relative">
+                <Shield className="w-4 h-4 text-blue-900 mb-0.5" />
+                <span className="font-cinzel text-xl font-extrabold text-[#2a1810]">{character.ac}</span>
+                <span className="text-[9px] uppercase font-bold text-[#6d4d29]">Класс Брони</span>
               </div>
 
-              {/* Items in Backpack */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] uppercase font-bold text-slate-400">
-                    Предметы в сумке ({backpackList.length}):
-                  </span>
-                  <span className="text-[10px] text-slate-500 italic">
-                    Пополняется Мастером по сюжету
+              {/* Initiative Banner */}
+              <div className="parchment-card p-2 flex flex-col items-center justify-center border-2 border-[#8c6a38]">
+                <Zap className="w-4 h-4 text-amber-700 mb-0.5" />
+                <span className="font-cinzel text-xl font-extrabold text-[#2a1810]">{formatModifier(dexMod)}</span>
+                <span className="text-[9px] uppercase font-bold text-[#6d4d29]">Инициатива</span>
+              </div>
+
+              {/* Speed Banner */}
+              <div className="parchment-card p-2 flex flex-col items-center justify-center border-2 border-[#8c6a38]">
+                <Footprints className="w-4 h-4 text-emerald-800 mb-0.5" />
+                <span className="font-cinzel text-xl font-extrabold text-[#2a1810]">{character.speed} фт</span>
+                <span className="text-[9px] uppercase font-bold text-[#6d4d29]">Скорость</span>
+              </div>
+            </div>
+
+            {/* Hit Points & Death Saves Box */}
+            <div className="parchment-card p-3 space-y-3">
+              <div className="flex items-center justify-between border-b border-[#8c6a38]/30 pb-1.5">
+                <div className="flex items-center gap-1.5">
+                  <Heart className="w-4 h-4 text-red-700 fill-current/30" />
+                  <span className="font-cinzel text-xs font-bold text-[#442813] uppercase">Очки Здоровья (HP)</span>
+                </div>
+                <span className="text-xs font-bold text-[#2a1810]">
+                  {character.currentHp} / {character.maxHp} HP
+                </span>
+              </div>
+
+              {/* HP Progress Bar */}
+              <div className="w-full h-3 bg-[#d9c7a5] rounded-full overflow-hidden border border-[#8a6833] p-0.5">
+                <div
+                  className={`h-full rounded-full transition-all duration-300 ${
+                    character.currentHp / character.maxHp > 0.5
+                      ? 'bg-emerald-700'
+                      : character.currentHp / character.maxHp > 0.25
+                      ? 'bg-amber-600'
+                      : 'bg-red-700'
+                  }`}
+                  style={{ width: `${Math.max(0, Math.min(100, (character.currentHp / character.maxHp) * 100))}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Equipped Items & Gear (View-only status, cannot be applied manually, factored by AI DM) */}
+            <div className="parchment-card p-3 space-y-2">
+              <div className="flex items-center justify-between border-b border-[#8c6a38]/30 pb-1">
+                <div className="flex items-center gap-1.5">
+                  <Shield className="w-4 h-4 text-amber-900" />
+                  <span className="font-cinzel text-xs font-bold text-[#442813] uppercase tracking-wider">
+                    Надетые вещи и экипировка
                   </span>
                 </div>
+                <span className="text-[10px] text-[#7a5b35] font-semibold flex items-center gap-1">
+                  <Sparkles className="w-3 h-3 text-amber-600" />
+                  <span>Учитывается нейросетью</span>
+                </span>
+              </div>
 
-                {backpackList.length === 0 ? (
-                  <p className="text-[11px] text-slate-500 italic p-2.5 bg-slate-950/60 rounded-lg text-center border border-slate-800/80">
-                    Рюкзак пуст. Найденные трофеи, награды и зелья добавляются Мастером при согласии или словах «я беру».
-                  </p>
+              <div className="space-y-1.5">
+                {equippedGearList.length === 0 ? (
+                  <div className="text-center py-2.5 px-3 bg-[#ebdcc4]/40 rounded-lg border border-dashed border-[#8c6a38]/50 text-xs text-[#7a5b35] italic">
+                    Ничего не надето. Нажмите «Надеть» на снаряжении в рюкзаке ниже.
+                  </div>
                 ) : (
-                  <div className="space-y-1 max-h-56 overflow-y-auto pr-0.5">
-                    {backpackList.map((item, idx) => {
-                      const consumable = isConsumableItem(item);
-                      const parsed = parseItemQuantity(item);
-                      return (
-                        <div
-                          key={idx}
-                          className="flex items-center justify-between p-2 rounded-lg bg-slate-950/80 border border-slate-800/90 text-xs hover:border-slate-700 transition"
-                        >
-                          <div className="flex items-center gap-2 text-slate-200 text-[11px] font-medium truncate pr-1 min-w-0">
-                            {getItemSlotIcon(item)}
-                            <span className="truncate">{parsed.baseName}</span>
-                            {parsed.count > 1 && (
-                              <span className="text-[10px] font-bold text-amber-300 bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 rounded-md font-mono shrink-0">
-                                ×{parsed.count}
-                              </span>
-                            )}
-                          </div>
+                  equippedGearList.map((item, i) => {
+                    const lower = item.toLowerCase();
+                    const isFlask = isWaterFlask(item);
+                    const isFilled = isFlask ? isFlaskFilled(item) : false;
+                    const baseItemName = isFlask ? getFlaskBaseName(item) : item;
 
-                          <div className="flex items-center gap-1 flex-shrink-0">
-                            {consumable ? (
+                    const isArmor = lower.includes('кольчуг') || lower.includes('доспех') || lower.includes('панцир') || lower.includes('латы') || lower.includes('кожан') || lower.includes('ac');
+                    const isShield = lower.includes('щит') || lower.includes('shield');
+                    const isWeapon = lower.includes('меч') || lower.includes('кинжал') || lower.includes('топор') || lower.includes('лук') || lower.includes('арбалет') || lower.includes('молот') || lower.includes('булав') || lower.includes('посох') || lower.includes('рапир') || lower.includes('сабл') || lower.includes('секир') || lower.includes('копь');
+
+                    const typeLabel = isArmor ? 'Броня' : isShield ? 'Щит' : isWeapon ? 'Оружие' : isFlask ? 'Фляга' : 'Экипировка';
+                    const iconEmoji = isArmor ? '🛡️' : isShield ? '🔰' : isWeapon ? '⚔️' : isFlask ? '💧' : '🎽';
+
+                    return (
+                      <div
+                        key={i}
+                        className="p-2 rounded-lg bg-[#fbf6ea] border border-[#8c6a38]/60 flex items-center justify-between text-xs select-text shadow-sm"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-sm">{iconEmoji}</span>
+                          <span className="font-bold text-[#2a1810] truncate">{baseItemName}</span>
+                          {isFlask && (
+                            <span
+                              className={`px-1.5 py-0.2 rounded text-[9px] font-bold shrink-0 border ${
+                                isFilled
+                                  ? 'bg-sky-100 text-sky-800 border-sky-400/60'
+                                  : 'bg-stone-200 text-stone-600 border-stone-400/60'
+                              }`}
+                            >
+                              {isFilled ? '💧 Наполнена' : '⚪ Пустая'}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                          {isFlask && (
+                            isFilled ? (
                               <button
                                 type="button"
-                                onClick={() => handleUseItem(item, idx)}
-                                className="px-2 py-0.5 rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold transition flex items-center gap-0.5 cursor-pointer shadow-sm"
-                                title="Применить 1 шт."
+                                onClick={() => handleDrinkFlask(item)}
+                                className="px-2 py-0.5 rounded bg-sky-800/85 hover:bg-sky-700 text-sky-100 text-[10px] font-bold transition cursor-pointer shadow-xs"
+                                title="Сделать глоток воды"
                               >
-                                <FlaskConical className="w-2.5 h-2.5" />
-                                <span>Применить</span>
+                                💧 Испить
                               </button>
                             ) : (
                               <button
                                 type="button"
-                                onClick={() => handleEquipItem(item)}
-                                className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-[10px] font-bold transition flex items-center gap-0.5 cursor-pointer shadow-sm"
-                                title="Надеть этот предмет"
+                                onClick={() => handleRefillFlask(item)}
+                                className="px-2 py-0.5 rounded bg-emerald-800/85 hover:bg-emerald-700 text-emerald-100 text-[10px] font-bold transition cursor-pointer shadow-xs"
+                                title="Наполнить флягу водой"
                               >
-                                <Sword className="w-2.5 h-2.5" />
-                                <span>Надеть</span>
+                                🚰 Наполнить
                               </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveBackpackItem(idx)}
-                              className="p-1 text-slate-500 hover:text-red-400 rounded hover:bg-slate-800 transition cursor-pointer"
-                              title="Удалить / выбросить"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
-                          </div>
+                            )
+                          )}
+                          <span className="bg-[#ebdcc4] px-2 py-0.5 rounded text-[10px] font-bold text-[#5c3c1e] border border-[#8c6a38]/40">
+                            {typeLabel}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleUnequipItem(item)}
+                            className="px-2.5 py-0.5 rounded bg-[#ebdcc4] hover:bg-amber-200 text-[#442813] hover:text-amber-950 border border-[#8c6a38]/60 text-[10px] font-bold transition cursor-pointer shadow-xs"
+                            title={`Снять «${item}» и убрать в рюкзак`}
+                          >
+                            Снять
+                          </button>
                         </div>
-                      );
-                    })}
-                  </div>
+                      </div>
+                    );
+                  })
                 )}
               </div>
-            </div>
 
-            {/* Resting Actions */}
-            <div className="pt-1">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block px-1 mb-2">
-                Отдых и Восстановление сил
-              </span>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={handleShortRest}
-                  className="p-2.5 rounded-xl bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-amber-500/40 text-amber-300 flex items-center justify-center gap-2 text-xs font-semibold shadow-sm transition cursor-pointer"
-                >
-                  <Sun className="w-4 h-4 text-amber-400" />
-                  <span>Короткий отдых</span>
-                </button>
-                <button
-                  onClick={handleLongRest}
-                  className="p-2.5 rounded-xl bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-indigo-500/40 text-indigo-300 flex items-center justify-center gap-2 text-xs font-semibold shadow-sm transition cursor-pointer"
-                >
-                  <Moon className="w-4 h-4 text-indigo-400" />
-                  <span>Длительный отдых</span>
-                </button>
+              <div className="pt-1 border-t border-[#8c6a38]/20 text-[10px] text-[#6d4e2a] italic flex items-center gap-1">
+                <span>ℹ️ Надетые предметы формируют защиту (AC {character.ac}) и арсенал. Нейросеть видит ваше снаряжение и сама рассчитывает его в бою.</span>
               </div>
             </div>
-          </>
-        )}
 
-        {/* TAB 2: SKILLS */}
-        {activeTab === 'skills' && (
-          <div className="space-y-1.5">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block px-1">
-              Навыки D&D 5e (клик для броска d20)
-            </span>
-            <div className="space-y-1">
-              {(Object.keys(SKILL_RUSSIAN_NAMES) as SkillName[]).map((skillKey) => {
-                const isProficient = character.skillProficiencies?.includes(skillKey);
-                const mod = getSkillModifier(character, skillKey);
-                const relatedStat = SKILL_ABILITY_MAP[skillKey];
-
-                return (
-                  <button
-                    key={skillKey}
-                    onClick={() => onRollSkill(skillKey, mod)}
-                    className={`w-full flex items-center justify-between p-2 rounded-xl text-xs transition cursor-pointer border ${
-                      isProficient
-                        ? 'bg-amber-950/20 hover:bg-amber-950/40 border-amber-500/30 text-amber-200 font-medium'
-                        : 'bg-slate-900/60 hover:bg-slate-900 border-slate-800/80 text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <div
-                        className={`w-2 h-2 rounded-full ${
-                          isProficient ? 'bg-amber-400 shadow-sm shadow-amber-400' : 'bg-slate-700'
-                        }`}
-                      />
-                      <span>{SKILL_RUSSIAN_NAMES[skillKey]}</span>
-                      <span className="text-[10px] text-slate-600 uppercase font-bold">
-                        ({relatedStat.toUpperCase()})
-                      </span>
-                    </div>
-                    <span className="font-mono font-bold text-amber-300">{formatModifier(mod)}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* TAB 3: EQUIPPED GEAR (НАДЕТОЕ СНАРЯЖЕНИЕ) */}
-        {activeTab === 'equipment' && (
-          <div className="space-y-4">
-            {/* Header */}
-            <div className="bg-slate-900/90 rounded-xl p-3.5 border border-slate-800 space-y-2.5 shadow-sm">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Shield className="w-4 h-4 text-amber-400" />
-                  <div>
-                    <span className="text-xs font-bold text-slate-100 block">
-                      Надетое снаряжение ({equippedList.length})
-                    </span>
-                    <span className="text-[10px] text-slate-400">
-                      Оружие в руках, надетая броня, щит и экипированные артефакты
-                    </span>
+            {/* Spells & Magic Section */}
+            {isCaster && (
+              <div className="parchment-card p-3 space-y-2">
+                <div className="flex items-center justify-between border-b border-[#8c6a38]/30 pb-1">
+                  <div className="flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-purple-800" />
+                    <span className="font-cinzel text-xs font-bold text-[#442813] uppercase">Заклинания</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[10px] font-bold text-amber-900">
+                    <span>DC: {spellSaveDc}</span>
+                    <span>•</span>
+                    <span>Атака: +{spellAttackBonus}</span>
                   </div>
                 </div>
-                <div className="text-[10px] font-mono font-bold text-amber-300 bg-amber-500/10 px-2.5 py-1 rounded-lg border border-amber-500/30 shadow-sm">
-                  AC: {character.ac}
+
+                {/* Cantrips and Spells Badges */}
+                <div className="space-y-1.5 pt-1">
+                  <div className="text-[10px] uppercase font-bold text-[#6d4d29]">Фокусы (0 уровень):</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(character.cantrips && character.cantrips.length > 0 ? character.cantrips : ['Свет', 'Огненный снаряд']).map((cantrip, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => handleCastSpell(cantrip)}
+                        className="px-2 py-1 rounded-md bg-[#ebdcc4] hover:bg-purple-200 border border-[#8c6a38]/50 text-xs font-semibold text-purple-950 transition cursor-pointer flex items-center gap-1"
+                        title="Сотворить фокус"
+                      >
+                        <span>✨ {cantrip}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="text-[10px] uppercase font-bold text-[#6d4d29] pt-1">Заклинания:</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(character.spells && character.spells.length > 0 ? character.spells : ['Волшебная стрела', 'Щит']).map((spell, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => handleCastSpell(spell)}
+                        className="px-2 py-1 rounded-md bg-[#ebdcc4] hover:bg-amber-200 border border-[#8c6a38]/50 text-xs font-semibold text-[#2a1810] transition cursor-pointer flex items-center gap-1"
+                        title="Сотворить заклинание"
+                      >
+                        <span>📜 {spell}</span>
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setIsAddingSpell(true)}
+                      className="px-2 py-1 rounded-md bg-amber-600/20 hover:bg-amber-600/30 border border-dashed border-amber-800 text-[11px] font-bold text-amber-950 flex items-center gap-1"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>Вписать заклинание</span>
+                    </button>
+                  </div>
+
+                  {/* Add Spell Quick Input */}
+                  {isAddingSpell && (
+                    <form onSubmit={handleAddSpellSubmit} className="flex items-center gap-2 pt-2">
+                      <input
+                        type="text"
+                        value={newSpellQuickInput}
+                        onChange={(e) => setNewSpellQuickInput(e.target.value)}
+                        placeholder="Название нового заклинания..."
+                        className="flex-1 bg-[#fbf6ea] border border-[#8c6a38] rounded-lg px-2.5 py-1 text-xs text-[#2a1810] focus:outline-none"
+                        autoFocus
+                      />
+                      <button
+                        type="submit"
+                        className="px-3 py-1 bg-amber-800 hover:bg-amber-700 text-amber-100 text-xs font-bold rounded-lg"
+                      >
+                        Добавить
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsAddingSpell(false)}
+                        className="text-xs text-slate-500 hover:text-slate-800 px-1"
+                      >
+                        Отмена
+                      </button>
+                    </form>
+                  )}
                 </div>
               </div>
-            </div>
+            )}
 
-            {/* Equipped Items List */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between px-1">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                  Экипировано на герое:
-                </span>
-                <span className="text-[10px] text-slate-500">
-                  AC: {character.ac}
-                </span>
+            {/* Currencies & Equipment */}
+            <div className="parchment-card p-3 space-y-2">
+              <div className="flex items-center justify-between border-b border-[#8c6a38]/30 pb-1">
+                <div className="flex items-center gap-1.5">
+                  <Coins className="w-4 h-4 text-amber-700" />
+                  <span className="font-cinzel text-xs font-bold text-[#442813] uppercase">Кошелек и Монеты</span>
+                </div>
+                <div className="flex items-center gap-2 text-xs font-bold text-amber-900">
+                  <span>🟡 {character.gold} gp</span>
+                  <span>⚪ 10 sp</span>
+                  <span>🟤 25 cp</span>
+                </div>
               </div>
 
-              {equippedList.length === 0 ? (
-                <div className="p-4 text-center bg-slate-900/40 rounded-xl border border-slate-800 space-y-1.5">
-                  <p className="text-xs text-slate-400 font-medium">На герое ничего не надето.</p>
-                  <p className="text-[11px] text-slate-500">
-                    Перейдите на вкладку «Статы» и нажмите «Надеть» у любого оружия или доспеха в рюкзаке.
-                  </p>
+              {/* Equipment list */}
+              <div className="space-y-1.5 pt-1 max-h-52 overflow-y-auto pr-1">
+                <div className="flex items-center justify-between pb-0.5">
+                  <span className="text-[10px] uppercase font-bold text-[#6d4d29] block">Снаряжение в рюкзаке:</span>
+                  <span className="text-[10px] font-semibold text-[#7a5b35]">{(character.inventory || []).length} предм.</span>
                 </div>
-              ) : (
-                <div className="space-y-1.5">
-                  {equippedList.map((item, idx) => {
-                    const parsed = parseItemQuantity(item);
+                {(character.inventory || []).length === 0 ? (
+                  <div className="text-center py-3 text-xs text-[#7a5b35] italic bg-[#ebdcc4]/30 rounded-lg border border-dashed border-[#8c6a38]/40">
+                    Рюкзак пуст. Найденные сокровища и трофеи будут появляться здесь.
+                  </div>
+                ) : (
+                  (character.inventory || []).map((item, i) => {
+                    const isFlask = isWaterFlask(item);
+                    const isFilled = isFlask ? isFlaskFilled(item) : false;
+                    const baseItemName = isFlask ? getFlaskBaseName(item) : item;
+                    const isConsumable = isConsumableItem(item);
+                    const isEquippable = isEquippableItem(item);
                     return (
                       <div
-                        key={idx}
-                        className="flex items-center justify-between p-3 rounded-xl bg-slate-900/95 border border-slate-800 hover:border-amber-500/30 text-xs shadow-sm transition"
+                        key={i}
+                        className="p-1.5 rounded-lg bg-[#fbf6ea] border border-[#8c6a38]/40 flex items-center justify-between text-xs gap-2 shadow-xs"
                       >
-                        <div className="flex items-center gap-2.5 text-slate-100 font-semibold truncate pr-2 min-w-0">
-                          <div className="p-1.5 rounded-lg bg-slate-950 border border-slate-800 shrink-0">
-                            {getItemSlotIcon(item)}
-                          </div>
-                          <span className="truncate">{parsed.baseName}</span>
-                          {parsed.count > 1 && (
-                            <span className="text-[10px] font-bold text-amber-300 bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 rounded-md font-mono shrink-0">
-                              ×{parsed.count}
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="text-[#3a2211] font-medium truncate">{baseItemName}</span>
+                          {isFlask && (
+                            <span
+                              className={`px-1.5 py-0.2 rounded text-[9px] font-bold shrink-0 border ${
+                                isFilled
+                                  ? 'bg-sky-100 text-sky-800 border-sky-400/60'
+                                  : 'bg-stone-200 text-stone-600 border-stone-400/60'
+                              }`}
+                              title={isFilled ? 'Фляга наполнена чистой водой' : 'Фляга пуста'}
+                            >
+                              {isFilled ? '💧 Наполнена' : '⚪ Пустая'}
                             </span>
                           )}
                         </div>
 
-                      <div className="flex items-center gap-1.5 flex-shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => handleUnequipItem(item)}
-                          className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-[10px] font-semibold transition flex items-center gap-1 cursor-pointer"
-                          title="Снять предмет и положить в рюкзак"
-                        >
-                          <Package className="w-3 h-3 text-amber-400" />
-                          <span>В рюкзак</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveEquippedItem(idx)}
-                          className="p-1 text-slate-500 hover:text-red-400 rounded-lg hover:bg-slate-800 transition cursor-pointer"
-                          title="Снять и выбросить"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {isEquippable && (
+                            <button
+                              type="button"
+                              onClick={() => handleEquipItem(item)}
+                              className="px-2 py-0.5 rounded bg-[#ebdcc4] hover:bg-amber-200 border border-[#8c6a38]/70 text-[#442813] text-[10px] font-bold shadow-xs transition cursor-pointer flex items-center gap-0.5"
+                              title={`Надеть «${item}»`}
+                            >
+                              <span>🛡️ Надеть</span>
+                            </button>
+                          )}
+                          {isFlask ? (
+                            isFilled ? (
+                              <button
+                                type="button"
+                                onClick={() => handleDrinkFlask(item)}
+                                className="px-2 py-0.5 rounded bg-sky-800/85 hover:bg-sky-700 text-sky-100 text-[10px] font-bold shadow-xs transition cursor-pointer flex items-center gap-0.5"
+                                title="Сделать глоток воды (фляга опустеет)"
+                              >
+                                <span>💧 Испить</span>
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleRefillFlask(item)}
+                                className="px-2 py-0.5 rounded bg-emerald-800/85 hover:bg-emerald-700 text-emerald-100 text-[10px] font-bold shadow-xs transition cursor-pointer flex items-center gap-0.5"
+                                title="Наполнить флягу свежей водой"
+                              >
+                                <span>🚰 Наполнить</span>
+                              </button>
+                            )
+                          ) : isConsumable ? (
+                            <button
+                              type="button"
+                              onClick={() => handleConsumeItem(item)}
+                              className="px-2 py-0.5 rounded bg-amber-700 hover:bg-amber-600 text-amber-100 text-[10px] font-bold shadow-xs transition cursor-pointer flex items-center gap-0.5"
+                              title={`Применить «${item}»`}
+                            >
+                              <span>✨ Применить</span>
+                            </button>
+                          ) : !isEquippable && (
+                            <button
+                              type="button"
+                              onClick={() => handleConsumeItem(item)}
+                              className="px-2 py-0.5 rounded bg-[#ebdcc4] hover:bg-amber-200 border border-[#8c6a38]/60 text-[#442813] text-[10px] font-bold shadow-xs transition cursor-pointer"
+                              title={`Использовать «${item}»`}
+                            >
+                              Применить
+                            </button>
+                          )}
+                        </div>
                       </div>
                     );
-                  })}
-                </div>
-              )}
+                  })
+                )}
+              </div>
             </div>
           </div>
-        )}
 
-        {/* TAB 4: LORE & BACKSTORY */}
-        {activeTab === 'lore' && (
-          <div className="space-y-3.5">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] uppercase font-bold tracking-wider text-amber-400 flex items-center gap-1.5">
-                <Scroll className="w-3.5 h-3.5" />
-                Лор и личность персонажа
-              </span>
+          {/* -----------------------------------------------------
+              COLUMN 3: APPEARANCE, PERSONALITY & FEATURES (3 Cols)
+              ----------------------------------------------------- */}
+          <div className="lg:col-span-3 space-y-4">
+            {/* Appearance & Personality Card */}
+            <div className="parchment-card p-3 space-y-2 text-xs">
+              <h4 className="font-cinzel text-xs font-bold text-[#442813] uppercase tracking-wider border-b border-[#8c6a38]/30 pb-1">
+                Внешность и Характер
+              </h4>
+              <p className="text-[11px] text-[#4a2e16] leading-relaxed">
+                {character.appearance || 'Мужественный взгляд, дорожный плащ, следы былых сражений.'}
+              </p>
+              <div className="border-t border-[#8c6a38]/20 pt-1.5 mt-1.5">
+                <span className="text-[10px] font-bold text-[#6d4d29] block mb-0.5">Черты личности:</span>
+                <p className="text-[11px] text-[#4a2e16] leading-relaxed italic">
+                  «{character.personalityTraits || 'Верность слову, осторожность в чужих землях.'}»
+                </p>
+              </div>
+            </div>
+
+            {/* Features & Traits Card */}
+            <div className="parchment-card p-3 space-y-2 text-xs">
+              <h4 className="font-cinzel text-xs font-bold text-[#442813] uppercase tracking-wider border-b border-[#8c6a38]/30 pb-1">
+                Умения и Особенности
+              </h4>
+              <div className="space-y-2 text-[11px] text-[#4a2e16]">
+                <div className="p-2 rounded bg-[#fbf6ea] border border-[#8c6a38]/30">
+                  <strong className="text-[#2a1810] block font-cinzel">Второе дыхание (Second Wind)</strong>
+                  <span>В свой ход можно восстановить 1d10 + уровень HP раз за короткий отдых.</span>
+                </div>
+                <div className="p-2 rounded bg-[#fbf6ea] border border-[#8c6a38]/30">
+                  <strong className="text-[#2a1810] block font-cinzel">Всплеск действий (Action Surge)</strong>
+                  <span>Возможность совершить одно дополнительное действие в свой ход.</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        {/* =========================================================
+            4. BOTTOM ARCH PEDESTAL (ROMAN NUMERAL XXI - THE WORLD)
+            ========================================================= */}
+        <div className="mt-6 pt-4 border-t-2 border-[#8c6a38]/60 flex flex-col sm:flex-row items-center justify-between gap-3 text-center">
+          {/* Rest Actions */}
+          <div className="flex items-center gap-2">
+            {onRestAction && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onRestAction('short')}
+                  className="px-3 py-1.5 rounded-xl bg-[#ebdcc4] hover:bg-amber-200 border border-[#8c6a38] text-xs font-cinzel font-bold text-[#2a1810] flex items-center gap-1.5 shadow-sm transition"
+                >
+                  <Sun className="w-3.5 h-3.5 text-amber-700" />
+                  <span>Короткий отдых</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onRestAction('long')}
+                  className="px-3 py-1.5 rounded-xl bg-[#ebdcc4] hover:bg-purple-200 border border-[#8c6a38] text-xs font-cinzel font-bold text-[#2a1810] flex items-center gap-1.5 shadow-sm transition"
+                >
+                  <Moon className="w-3.5 h-3.5 text-purple-700" />
+                  <span>Длинный отдых</span>
+                </button>
+              </>
+            )}
+          </div>
+
+          {/* Roman Numeral XXI Pedestal Plaque */}
+          <div className="px-6 py-1.5 rounded-full bg-[#fbf6ea] border-2 border-[#8a6833] font-cinzel font-extrabold text-sm text-[#442813] shadow-md tracking-widest">
+            XXI • МИР
+          </div>
+
+          {/* Bottom Close Button */}
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-amber-800 to-amber-700 hover:from-amber-700 hover:to-amber-600 text-amber-100 text-xs font-cinzel font-bold shadow-md transition flex items-center gap-1.5 cursor-pointer"
+            >
+              <ChevronUp className="w-4 h-4" />
+              <span>Свернуть лист персонажа</span>
+            </button>
+          )}
+        </div>
+
+      </div>
+
+      {/* =========================================================
+          5. LEVEL UP MODAL (5e RULES: HP INCREASE, NEW CANTRIP & SPELL)
+          ========================================================= */}
+      {isLevelUpModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
+          <div className="parchment-card max-w-lg w-full p-6 space-y-4 shadow-2xl border-4 border-[#8c6a38] relative">
+            <div className="text-center space-y-1">
+              <span className="text-[10px] uppercase font-bold text-amber-800 tracking-widest">D&D 5e • Повышение Уровня</span>
+              <h2 className="font-cinzel text-2xl font-black text-[#2a1810]">
+                УРОВЕНЬ {xpInfo.level}!
+              </h2>
+              <p className="text-xs text-[#5c3c1e]">
+                Ваши приключения принесли плоды. Ваша сила и мастерство возросли.
+              </p>
+            </div>
+
+            {/* Stat Gains Info */}
+            <div className="p-3 bg-[#fbf6ea] rounded-xl border border-[#8c6a38]/40 space-y-2 text-xs">
+              <div className="flex items-center justify-between font-bold text-[#2a1810]">
+                <span>Прибавка к здоровью (HP):</span>
+                <span className="text-emerald-800">+{calculateHpGainOnLevelUp(character.class, stats.con)} HP</span>
+              </div>
+              <div className="flex items-center justify-between font-bold text-[#2a1810]">
+                <span>Бонус мастерства:</span>
+                <span className="text-amber-900">+{xpInfo.proficiencyBonus}</span>
+              </div>
+            </div>
+
+            {/* Spellcaster Additions (Cantrips & Spells) */}
+            {isCaster && (
+              <div className="space-y-3 border-t border-[#8c6a38]/30 pt-3 text-xs">
+                <div>
+                  <label className="block font-bold text-[#442813] mb-1">
+                    Новый фокус (0 уровень):
+                  </label>
+                  <input
+                    type="text"
+                    value={newCantripInput}
+                    onChange={(e) => setNewCantripInput(e.target.value)}
+                    placeholder={classCantripSuggestions[0] || 'Например: Свет, Огненный снаряд...'}
+                    className="w-full bg-[#fbf6ea] border border-[#8c6a38] rounded-xl px-3 py-1.5 text-xs text-[#2a1810] focus:outline-none"
+                  />
+                  {classCantripSuggestions.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {classCantripSuggestions.slice(0, 3).map((s) => (
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() => setNewCantripInput(s)}
+                          className="text-[9px] px-1.5 py-0.5 bg-[#ebdcc4] hover:bg-amber-200 rounded border border-[#8c6a38]/40 text-[#442813]"
+                        >
+                          + {s}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block font-bold text-[#442813] mb-1">
+                    Новое заклинание:
+                  </label>
+                  <input
+                    type="text"
+                    value={newSpellInput}
+                    onChange={(e) => setNewSpellInput(e.target.value)}
+                    placeholder={classSpellSuggestions[0] || 'Например: Огненный шар, Щит...'}
+                    className="w-full bg-[#fbf6ea] border border-[#8c6a38] rounded-xl px-3 py-1.5 text-xs text-[#2a1810] focus:outline-none"
+                  />
+                  {classSpellSuggestions.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {classSpellSuggestions.slice(0, 3).map((s) => (
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() => setNewSpellInput(s)}
+                          className="text-[9px] px-1.5 py-0.5 bg-[#ebdcc4] hover:bg-amber-200 rounded border border-[#8c6a38]/40 text-[#442813]"
+                        >
+                          + {s}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#8c6a38]/30">
               <button
-                onClick={() => setIsEditingLore(!isEditingLore)}
-                className="text-xs text-amber-400 hover:text-amber-300 flex items-center gap-1 font-semibold cursor-pointer"
+                type="button"
+                onClick={() => setIsLevelUpModalOpen(false)}
+                className="px-3 py-1.5 rounded-xl border border-[#8c6a38] text-xs text-[#5c3c1e] hover:bg-[#ebdcc4]"
               >
-                {isEditingLore ? <Check className="w-3.5 h-3.5" /> : <Edit3 className="w-3.5 h-3.5" />}
-                <span>{isEditingLore ? 'Готово' : 'Редактировать'}</span>
+                Отложить
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmLevelUp}
+                className="px-5 py-2 bg-gradient-to-r from-amber-700 to-amber-600 hover:from-amber-600 hover:to-amber-500 text-amber-100 font-cinzel font-bold text-xs rounded-xl shadow-lg border border-amber-400 cursor-pointer transition"
+              >
+                Принять уровень {xpInfo.level}!
               </button>
             </div>
-
-            {/* Bio / Backstory */}
-            <div className="bg-slate-900/90 p-3 rounded-xl border border-slate-800 space-y-1">
-              <span className="text-[10px] uppercase font-bold text-slate-400 block">
-                Биография и прошлое
-              </span>
-              {isEditingLore ? (
-                <textarea
-                  value={character.bio || ''}
-                  onChange={(e) =>
-                    onUpdateCharacter((prev) => ({
-                      ...prev,
-                      bio: e.target.value,
-                    }))
-                  }
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500 min-h-[90px]"
-                />
-              ) : (
-                <p className="text-xs text-slate-300 leading-relaxed italic">
-                  {character.bio || character.backstory || 'История героя пока не записана...'}
-                </p>
-              )}
-            </div>
-
-            {/* Personality Traits */}
-            {character.personalityTraits && (
-              <div className="bg-slate-900/90 p-3 rounded-xl border border-slate-800 space-y-1">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block">
-                  Черты характера и идеалы
-                </span>
-                <p className="text-xs text-slate-300 leading-relaxed">
-                  {character.personalityTraits}
-                </p>
-              </div>
-            )}
-
-            {/* Motivation */}
-            {character.motivation && (
-              <div className="bg-slate-900/90 p-3 rounded-xl border border-slate-800 space-y-1">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block">
-                  Мотивация и цель приключения
-                </span>
-                <p className="text-xs text-slate-300 leading-relaxed text-amber-200/90">
-                  {character.motivation}
-                </p>
-              </div>
-            )}
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 };

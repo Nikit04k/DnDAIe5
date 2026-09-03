@@ -322,7 +322,6 @@ export async function testVoiceSynthesis(options: {
   const {
     provider,
     rate = '+0%',
-    browserVoice = '',
     testText,
   } = options;
   let voice = options.voice || 'ru-RU-DmitryNeural';

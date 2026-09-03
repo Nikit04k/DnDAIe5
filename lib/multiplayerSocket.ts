@@ -5,7 +5,6 @@ import {
   ChatMessage,
   DiceRollResult,
   MultiplayerRoomState,
-  NetworkPlayer,
   RollRequirement,
   StateUpdate,
   WsClientMessage,

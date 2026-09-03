@@ -63,6 +63,10 @@ export interface CharacterSheet {
   equippedItems?: string[];  // Надетое снаряжение (оружие, доспех, щит, шлем, плащ)
   inventory: string[];       // Имеющиеся, но не надетые предметы в рюкзаке
   gold: number;
+  xpMultiplier?: number;     // Мультипликатор опыта: 0.5x, 1x, 1.5x, 2x
+  cantrips?: string[];       // Фокусы (0 уровень магии)
+  spells?: string[];         // Заклинания персонажа
+  attacks?: Array<{ name: string; bonus: string; damage: string }>; // Оружие и атаки
   deathSaves?: {
     successes: number;
     failures: number;
@@ -82,13 +86,16 @@ export interface CharacterSheet {
   alignment?: string;
 }
 
+export type GameDifficulty = 'story' | 'standard' | 'hardcore';
+
 export interface WorldSettings {
   customSetting: string;    // Player's custom world lore, geography, magic, factions
   customTone: string;       // Atmosphere, narrative style (Grimdark, High Fantasy, Eldritch, etc.)
   customRules: string;      // World taboos, unique mechanics, deities, danger level
   startingScene?: string;   // Player's custom starting situation/scene where the game begins
-  difficulty?: 'story' | 'standard' | 'hardcore';
+  difficulty?: GameDifficulty;
   selectedPresetId?: string;
+  xpMultiplier?: number;    // 0.5, 1, 1.5, 2
 }
 
 export type RollType = 'skill_check' | 'attack_roll' | 'saving_throw' | 'initiative' | 'ability_check';
@@ -109,6 +116,7 @@ export interface StateUpdate {
   added_items: string[];     // New items gained
   removed_items: string[];   // Items spent/lost
   gold_change: number;       // Change in gold (can be negative or positive)
+  xp_change?: number;        // Experience points awarded by DM
   location_name?: string;    // Current location description
   time_passed_minutes?: number; // In-game time passed in minutes (e.g. 15 for fast action, 60 for 1h, 360 for wait to evening, 600 for 10h travel, 480 for sleep)
   new_time?: string;         // Explicit target time (e.g. "18:00", "День 1 • 18:00")

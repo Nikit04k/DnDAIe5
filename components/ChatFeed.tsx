@@ -4,7 +4,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ChatMessage, StateUpdate } from '@/types/dnd';
 import {
   Sparkles,
-  User,
   Heart,
   Coins,
   Package,

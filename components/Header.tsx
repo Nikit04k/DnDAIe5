@@ -9,7 +9,6 @@ import {
   BookOpen,
   Download,
   Upload,
-  PlusCircle,
   RotateCcw,
   Shield,
   Heart,
@@ -76,7 +75,6 @@ export const Header: React.FC<HeaderProps> = ({
 
   const hpPercent = character ? Math.max(0, Math.min(100, (character.currentHp / (character.maxHp || 1)) * 100)) : 100;
   const hpColor = hpPercent > 50 ? 'text-emerald-400' : hpPercent > 20 ? 'text-amber-400' : 'text-red-400';
-  const hpBg = hpPercent > 50 ? 'bg-emerald-500' : hpPercent > 20 ? 'bg-amber-500' : 'bg-red-500';
 
   const isMobile = typeof window !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 

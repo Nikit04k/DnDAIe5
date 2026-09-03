@@ -12,11 +12,7 @@ import {
   Heart,
   Sparkles,
   UserPlus,
-  Compass,
   Key,
-  ShieldCheck,
-  Scroll,
-  Zap,
 } from 'lucide-react';
 import { PartyCompanion, LorebookEntry } from '@/types/dnd';
 
@@ -63,16 +59,13 @@ export const JournalModal: React.FC<JournalModalProps> = ({
   partyCompanions = [],
   nearbyNpcs = [],
   lorebookEntries = [],
-  storySummary = '',
   onAddEntry,
   onDeleteEntry,
   onAddCompanion,
-  onUpdateCompanion,
   onDeleteCompanion,
   onAddLorebookEntry,
   onToggleLorebookEntry,
   onDeleteLorebookEntry,
-  onSaveStorySummary,
 }) => {
   const [activeTab, setActiveTab] = useState<'party' | 'lorebook' | 'locations' | 'notes'>('party');
   const [newTitle, setNewTitle] = useState('');
@@ -90,7 +83,7 @@ export const JournalModal: React.FC<JournalModalProps> = ({
   const [compMainStat, setCompMainStat] = useState('STR +3');
   const [compAbilities, setCompAbilities] = useState('');
   const [compPersonality, setCompPersonality] = useState('');
-  const [compAffinity, setCompAffinity] = useState<'devoted' | 'friendly' | 'neutral' | 'distrustful'>('friendly');
+  const [compAffinity] = useState<'devoted' | 'friendly' | 'neutral' | 'distrustful'>('friendly');
 
   // Lorebook form state
   const [lbTitle, setLbTitle] = useState('');
@@ -98,9 +91,6 @@ export const JournalModal: React.FC<JournalModalProps> = ({
   const [lbContent, setLbContent] = useState('');
   const [lbConstant, setLbConstant] = useState(false);
   const [lbCategory, setLbCategory] = useState<'npc' | 'location' | 'quest' | 'item' | 'rule'>('npc');
-
-  // Summary state
-  const [summaryText, setSummaryText] = useState(storySummary);
 
   if (!isOpen) return null;
 

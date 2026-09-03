@@ -47,7 +47,17 @@ const DEFAULT_LOREBOOK_ENTRIES: LorebookEntry[] = [
     category: 'item',
   },
 ];
-import { CHARACTER_PRESETS, normalizeRationItem, addItemToInventory, removeItemFromInventory } from '@/lib/dndRules';
+import {
+  CHARACTER_PRESETS,
+  normalizeRationItem,
+  addItemToInventory,
+  removeItemFromInventory,
+  getLevelFromXp,
+  calculateHpGainOnLevelUp,
+  isClassSpellcaster,
+  CANTRIP_SUGGESTIONS_BY_CLASS,
+  SPELL_SUGGESTIONS_BY_CLASS,
+} from '@/lib/dndRules';
 import { parseAndAdvanceTime, formatInGameClock } from '@/lib/timeUtils';
 import { executeDirectDmTurn, isStandaloneMobile } from '@/lib/directAiClient';
 import {
@@ -116,17 +126,16 @@ import { PartyRosterPanel } from '@/components/PartyRosterPanel';
 import {
   Shield,
   Sparkles,
-  User,
-  PanelLeftClose,
-  PanelLeftOpen,
   ScrollText,
   Dices,
-  BookOpen,
-  MapPin,
   Users,
-  PlusCircle,
   Settings,
   Radio,
+  ChevronDown,
+  ChevronUp,
+  Award,
+  Heart,
+  Coins,
 } from 'lucide-react';
 
 export default function DnDApp() {
@@ -134,7 +143,6 @@ export default function DnDApp() {
   const [isGameStarted, setIsGameStarted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [character, setCharacter] = useState<CharacterSheet | null>(null);
-  const [mobileTab, setMobileTab] = useState<'story' | 'character'>('story');
   const [world, setWorld] = useState<WorldSettings>({
     customSetting: '',
     customTone: '',
@@ -161,18 +169,6 @@ export default function DnDApp() {
 
   const formatInGameTime = (day: number, totalMinutes: number): string => {
     return formatInGameClock(day, totalMinutes);
-  };
-
-  const advanceInGameTime = (minutesToAdd: number): string => {
-    let nextMinutes = inGameMinutes + minutesToAdd;
-    let nextDay = inGameDay;
-    if (nextMinutes >= 1440) {
-      nextDay += Math.floor(nextMinutes / 1440);
-      nextMinutes = nextMinutes % 1440;
-    }
-    setInGameDay(nextDay);
-    setInGameMinutes(nextMinutes);
-    return formatInGameClock(nextDay, nextMinutes);
   };
 
   // User Settings State
@@ -211,16 +207,14 @@ export default function DnDApp() {
     }
   };
 
-  // Resizable left column width state (Desktop)
-  const [sidebarWidth, setSidebarWidth] = useState<number>(360);
-  const [isResizing, setIsResizing] = useState<boolean>(false);
+  // Top dropdown Character Sheet drawer state
+  const [isCharacterSheetOpen, setIsCharacterSheetOpen] = useState(false);
 
   // Modals & Panels
   const [isCreatorOpen, setIsCreatorOpen] = useState(false);
   const [isDiceRollerOpen, setIsDiceRollerOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isJournalOpen, setIsJournalOpen] = useState(false);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isLanModalOpen, setIsLanModalOpen] = useState(false);
 
   // LAN Multiplayer State
@@ -284,9 +278,6 @@ export default function DnDApp() {
         return;
       }
 
-      const target = e.target as HTMLElement;
-      const isInput = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
-
       if (e.altKey && !e.ctrlKey && !e.metaKey) {
         const key = e.key.toLowerCase();
         if (key === 'd' || key === 'в') {
@@ -301,9 +292,6 @@ export default function DnDApp() {
         } else if (key === 'm' || key === 'ь') {
           e.preventDefault();
           setIsLanModalOpen((prev) => !prev);
-        } else if (key === 'b' || key === 'и') {
-          e.preventDefault();
-          setIsSidebarOpen((prev) => !prev);
         }
       }
     };
@@ -744,54 +732,6 @@ export default function DnDApp() {
     return () => unsub();
   }, []);
 
-  // Load saved sidebar width
-  useEffect(() => {
-    try {
-      const savedWidth = localStorage.getItem('dnd5e_sidebar_width');
-      if (savedWidth) {
-        const parsed = parseInt(savedWidth, 10);
-        if (!isNaN(parsed) && parsed >= 280 && parsed <= 650) {
-          setSidebarWidth(parsed);
-        }
-      }
-    } catch {}
-  }, []);
-
-  // Handle mouse resizing drag
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isResizing) return;
-      const clampedWidth = Math.max(280, Math.min(650, e.clientX));
-      setSidebarWidth(clampedWidth);
-    };
-
-    const handleMouseUp = () => {
-      if (isResizing) {
-        setIsResizing(false);
-        try {
-          localStorage.setItem('dnd5e_sidebar_width', String(sidebarWidth));
-        } catch {}
-      }
-    };
-
-    if (isResizing) {
-      window.addEventListener('mousemove', handleMouseMove);
-      window.addEventListener('mouseup', handleMouseUp);
-      document.body.style.cursor = 'col-resize';
-      document.body.style.userSelect = 'none';
-    } else {
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    }
-
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    };
-  }, [isResizing, sidebarWidth]);
-
   // Initialize from LocalStorage
   useEffect(() => {
     setApiKey(getStoredApiKey());
@@ -899,6 +839,63 @@ export default function DnDApp() {
       setCharacter((prev) => {
         if (!prev) return prev;
         return { ...prev, gold: Math.max(0, (prev.gold || 0) + update.gold_change) };
+      });
+    }
+
+    // 3. Experience (XP) & D&D 5e Level-Up
+    if (update.xp_change && update.xp_change !== 0) {
+      setCharacter((prev) => {
+        if (!prev) return prev;
+        const multiplier = prev.xpMultiplier || world.xpMultiplier || 1;
+        const awardedXp = Math.round(update.xp_change! * multiplier);
+        const nextXp = Math.max(0, (prev.experience || 0) + awardedXp);
+        const xpInfo = getLevelFromXp(nextXp);
+
+        // Check if level threshold reached
+        if (xpInfo.level > prev.level) {
+          playHealSound();
+          const hpGain = calculateHpGainOnLevelUp(prev.class, prev.stats?.con || 10);
+          const isCaster = isClassSpellcaster(prev.class);
+          const newCantrips = [...(prev.cantrips || [])];
+          const newSpells = [...(prev.spells || [])];
+
+          if (isCaster) {
+            const cantripPool = CANTRIP_SUGGESTIONS_BY_CLASS[prev.class] || [];
+            const spellPool = SPELL_SUGGESTIONS_BY_CLASS[prev.class] || [];
+            const nextCantrip = cantripPool.find((c) => !newCantrips.includes(c));
+            if (nextCantrip) newCantrips.push(nextCantrip);
+            const nextSpell = spellPool.find((s) => !newSpells.includes(s));
+            if (nextSpell) newSpells.push(nextSpell);
+          }
+
+          setTimeout(() => {
+            setHistory((oldHist) => [
+              ...oldHist,
+              {
+                id: `lvl_${Date.now()}`,
+                role: 'system',
+                text: `🎉 **ПОВЫШЕНИЕ УРОВНЯ!** ${prev.name} достигает **${xpInfo.level}-го уровня**! (Получено +${awardedXp} XP, HP +${hpGain}, Бонус мастерства +${xpInfo.proficiencyBonus}${isCaster ? ', открыты новые заклинания' : ''}). Откройте лист персонажа вверху экрана, чтобы настроить способности!`,
+                timestamp: Date.now(),
+              },
+            ]);
+          }, 150);
+
+          return {
+            ...prev,
+            experience: nextXp,
+            level: xpInfo.level,
+            proficiencyBonus: xpInfo.proficiencyBonus,
+            maxHp: prev.maxHp + hpGain,
+            currentHp: prev.currentHp + hpGain,
+            cantrips: newCantrips,
+            spells: newSpells,
+          };
+        }
+
+        return {
+          ...prev,
+          experience: nextXp,
+        };
       });
     }
 
@@ -1476,9 +1473,9 @@ export default function DnDApp() {
     setIsCreatorOpen(true);
   };
 
-  // Item consumption callback from character sheet (potions, scrolls, torches)
-  const handleItemUsed = (itemName: string, narrativeAction: string) => {
-    handleSendAction(`Я применяю: ${itemName}. Опиши эффект и результат этого действия.`);
+  // Item consumption callback from character sheet (potions, scrolls, torches, water flask)
+  const handleItemUsed = (itemName: string, narrativeAction?: string) => {
+    handleSendAction(narrativeAction || `Я применяю: ${itemName}. Опиши эффект и результат этого действия.`);
   };
 
   return (
@@ -1529,59 +1526,144 @@ export default function DnDApp() {
         </div>
       )}
 
-      {/* Main Gameplay Screen */}
+      {/* Main Gameplay Screen with Top Dropdown Character Bar */}
       {isGameStarted && character ? (
-        <div className="flex-1 min-h-0 flex flex-col md:flex-row overflow-hidden relative">
-          {/* Left Column: Character Sheet (Resizable on Desktop, Fullscreen on Mobile) */}
-          <aside
-            style={{
-              width: mobileTab === 'character' ? '100%' : `${sidebarWidth}px`,
-              minWidth: mobileTab === 'character' ? '100%' : '280px',
-              maxWidth: mobileTab === 'character' ? '100%' : '650px',
-            }}
-            className={`${
-              mobileTab === 'character' ? 'flex flex-1 w-full' : 'hidden md:flex'
-            } flex-shrink-0 z-10 h-full min-h-0 overflow-y-auto border-r border-slate-800/80 bg-slate-950/95 backdrop-blur-sm shadow-2xl md:shadow-none relative`}
-          >
-            <CharacterSheetView
-              character={character}
-              onUpdateCharacter={(updater) => {
-                setCharacter((prev) => {
-                  const updated = prev ? updater(prev) : prev;
-                  if (updated && isMultiplayerConnected) {
-                    lanSocket.updateCharacter(updated);
-                  }
-                  return updated;
-                });
-              }}
-              onRollStat={handleRollStat}
-              onRollSkill={handleRollSkill}
-              onRestAction={handleRestAction}
-              onItemUsed={handleItemUsed}
-            />
-          </aside>
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden relative">
+          {/* ================= TOP CHARACTER QUICK BAR & DROPDOWN TOGGLE ================= */}
+          {(() => {
+            const charXpInfo = getLevelFromXp(character.experience || 0);
+            const canLvlUp = charXpInfo.level > character.level;
+            const hpRatio = character.currentHp / (character.maxHp || 1);
 
-          {/* Resizer Divider Handle (Desktop only) */}
-          <div
-            onMouseDown={() => setIsResizing(true)}
-            className="hidden md:flex w-2.5 -ml-1 cursor-col-resize z-20 items-center justify-center bg-transparent hover:bg-amber-500/30 active:bg-amber-500/60 transition-colors group select-none relative"
-            title="Потяните, чтобы изменить ширину колонки персонажа"
-          >
-            <div
-              className={`w-1 rounded-full transition-all duration-150 ${
-                isResizing
-                  ? 'bg-amber-400 h-16 shadow-lg shadow-amber-400/50'
-                  : 'bg-slate-700/80 group-hover:bg-amber-400 group-hover:h-12'
-              }`}
-            />
-          </div>
+            return (
+              <div className="relative z-30 flex-shrink-0 bg-slate-950/95 border-b border-amber-500/30 px-3 py-2 shadow-lg backdrop-blur-sm">
+                <div className="max-w-7xl mx-auto flex items-center justify-between gap-2 flex-wrap">
+                  {/* Left: Avatar, Name, Class & Level */}
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div
+                      onClick={() => setIsCharacterSheetOpen((prev) => !prev)}
+                      className="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-600 to-amber-400 border border-amber-300 flex items-center justify-center font-cinzel font-bold text-slate-950 text-sm shadow cursor-pointer hover:scale-105 transition shrink-0"
+                      title="Нажмите, чтобы открыть лист персонажа"
+                    >
+                      {character.name.charAt(0).toUpperCase()}
+                    </div>
 
-          {/* Right Column: Narrative Feed & Action Area (Desktop or Mobile Active Tab - INDEPENDENT SCROLL) */}
-          <main
-            className={`${
-              mobileTab === 'story' ? 'flex flex-1' : 'hidden md:flex'
-            } flex-col justify-between overflow-hidden relative w-full h-full min-h-0`}
-          >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span
+                          onClick={() => setIsCharacterSheetOpen((prev) => !prev)}
+                          className="font-cinzel font-bold text-sm text-amber-200 truncate cursor-pointer hover:text-amber-100 transition"
+                        >
+                          {character.name}
+                        </span>
+                        <span className="text-[10px] px-2 py-0.2 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/30 font-bold shrink-0">
+                          {character.level} ур.
+                        </span>
+                      </div>
+                      <span className="text-[11px] text-slate-400 truncate block">
+                        {character.race} • {character.class}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Center: HP, AC, Gold, XP Pill */}
+                  <div className="flex items-center gap-2 sm:gap-3 flex-wrap text-xs">
+                    {/* HP Pill */}
+                    <div className="flex items-center gap-1.5 bg-slate-900/90 px-2.5 py-1 rounded-xl border border-slate-800 shadow-sm">
+                      <Heart className="w-3.5 h-3.5 text-red-400 fill-current/30" />
+                      <span className="font-bold text-slate-200">
+                        {character.currentHp}/{character.maxHp}
+                      </span>
+                      <div className="w-12 h-2 bg-slate-800 rounded-full overflow-hidden ml-1 hidden sm:block">
+                        <div
+                          className={`h-full rounded-full transition-all ${
+                            hpRatio > 0.5 ? 'bg-emerald-500' : hpRatio > 0.25 ? 'bg-amber-500' : 'bg-red-500'
+                          }`}
+                          style={{ width: `${Math.max(0, Math.min(100, hpRatio * 100))}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* AC Badge */}
+                    <div className="flex items-center gap-1 bg-slate-900/90 px-2.5 py-1 rounded-xl border border-slate-800 shadow-sm font-semibold text-slate-300">
+                      <Shield className="w-3.5 h-3.5 text-blue-400" />
+                      <span>{character.ac} AC</span>
+                    </div>
+
+                    {/* Gold Badge */}
+                    <div className="flex items-center gap-1 bg-slate-900/90 px-2.5 py-1 rounded-xl border border-slate-800 shadow-sm font-semibold text-amber-300">
+                      <Coins className="w-3.5 h-3.5 text-amber-400" />
+                      <span>{character.gold} gp</span>
+                    </div>
+
+                    {/* XP Progress Badge */}
+                    <div className="hidden md:flex items-center gap-1.5 bg-slate-900/90 px-2.5 py-1 rounded-xl border border-slate-800 shadow-sm text-[11px]">
+                      <Award className="w-3.5 h-3.5 text-amber-400" />
+                      <span className="text-slate-300">
+                        {character.experience || 0} / {charXpInfo.nextLevelXp} XP
+                      </span>
+                      <div className="w-14 h-1.5 bg-slate-800 rounded-full overflow-hidden ml-1">
+                        <div
+                          className="h-full bg-amber-500 rounded-full transition-all duration-300"
+                          style={{ width: `${charXpInfo.progressPercent}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Can Level Up Badge */}
+                    {canLvlUp && (
+                      <button
+                        onClick={() => setIsCharacterSheetOpen(true)}
+                        className="px-2.5 py-1 bg-gradient-to-r from-amber-600 to-amber-500 text-slate-950 font-cinzel font-bold text-[10px] rounded-lg animate-pulse shadow-md cursor-pointer flex items-center gap-1"
+                      >
+                        <Sparkles className="w-3 h-3 text-slate-950" />
+                        <span>ПОВЫСИТЬ УРОВЕНЬ!</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Right: Dropdown Toggle Button */}
+                  <button
+                    onClick={() => setIsCharacterSheetOpen((prev) => !prev)}
+                    className={`px-3.5 py-1.5 rounded-xl border text-xs font-cinzel font-bold transition flex items-center gap-1.5 shadow-md cursor-pointer ${
+                      isCharacterSheetOpen
+                        ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-amber-500/20'
+                        : 'bg-gradient-to-r from-amber-950/60 via-slate-900 to-slate-900 hover:from-amber-900/60 border-amber-500/40 text-amber-200'
+                    }`}
+                  >
+                    <span>📜 Лист персонажа</span>
+                    {isCharacterSheetOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </button>
+                </div>
+
+                {/* SLIDING TAROT PARCHMENT CHARACTER SHEET (OVERLAY DRAWER) */}
+                {isCharacterSheetOpen && (
+                  <div className="absolute inset-x-0 top-full z-50 max-h-[85vh] overflow-y-auto bg-[#110e0c]/98 backdrop-blur-xl shadow-2xl border-b-2 border-amber-600/50 animate-dropdownSlideDown">
+                    <CharacterSheetView
+                      character={character}
+                      onUpdateCharacter={(updater) => {
+                        setCharacter((prev) => {
+                          const updated = prev ? updater(prev) : prev;
+                          if (updated && isMultiplayerConnected) {
+                            lanSocket.updateCharacter(updated);
+                          }
+                          return updated;
+                        });
+                      }}
+                      onRollStat={handleRollStat}
+                      onRollSkill={handleRollSkill}
+                      onRestAction={handleRestAction}
+                      onItemUsed={handleItemUsed}
+                      onClose={() => setIsCharacterSheetOpen(false)}
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* Full-Width Narrative Feed & Action Area (100% SCREEN WIDTH) */}
+          <main className="flex flex-1 flex-col justify-between overflow-hidden relative w-full h-full min-h-0">
             {/* Dungeon Stone & Centered Mystic Rune Circle Background (Img 1) */}
             <div className="absolute inset-0 pointer-events-none overflow-hidden select-none z-0 flex items-center justify-center">
               {/* Dark masonry texture */}
@@ -1762,9 +1844,9 @@ export default function DnDApp() {
       {isGameStarted && character && (
         <nav className="md:hidden flex-shrink-0 z-40 bg-slate-950/95 backdrop-blur-md border-t border-slate-800/90 pb-safe pt-1 px-2 flex items-center justify-around shadow-2xl">
           <button
-            onClick={() => setMobileTab('story')}
+            onClick={() => setIsCharacterSheetOpen(false)}
             className={`flex-1 py-1 px-1 rounded-xl flex flex-col items-center gap-0.5 transition cursor-pointer active:scale-95 touch-manipulation ${
-              mobileTab === 'story'
+              !isCharacterSheetOpen
                 ? 'text-amber-400 font-bold bg-amber-500/15 shadow-sm'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
@@ -1779,9 +1861,9 @@ export default function DnDApp() {
           </button>
 
           <button
-            onClick={() => setMobileTab('character')}
+            onClick={() => setIsCharacterSheetOpen((prev) => !prev)}
             className={`flex-1 py-1 px-1 rounded-xl flex flex-col items-center gap-0.5 transition cursor-pointer active:scale-95 touch-manipulation ${
-              mobileTab === 'character'
+              isCharacterSheetOpen
                 ? 'text-amber-400 font-bold bg-amber-500/15 shadow-sm'
                 : 'text-slate-400 hover:text-slate-200'
             }`}

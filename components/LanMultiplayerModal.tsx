@@ -11,13 +11,9 @@ import {
   Check,
   Shield,
   Heart,
-  Sparkles,
   Crown,
-  AlertCircle,
-  RefreshCw,
   X,
   Play,
-  Share2,
   Activity,
   ArrowRight,
 } from 'lucide-react';
@@ -55,13 +51,11 @@ export const LanMultiplayerModal: React.FC<LanMultiplayerModalProps> = ({
   const [selectedCharPreset, setSelectedCharPreset] = useState<string>('');
   const [copied, setCopied] = useState(false);
   const [detectedLanIp, setDetectedLanIp] = useState<string>(lanIp || '127.0.0.1');
-  const [port, setPort] = useState<number>(3000);
-  const [loadingIp, setLoadingIp] = useState(false);
+  const [port] = useState<number>(3000);
 
   // Fetch host LAN IP from API
   useEffect(() => {
     if (isOpen) {
-      setLoadingIp(true);
       fetch('/api/lan/info')
         .then((res) => res.json())
         .then((data) => {
@@ -72,8 +66,7 @@ export const LanMultiplayerModal: React.FC<LanMultiplayerModalProps> = ({
             }
           }
         })
-        .catch(() => {})
-        .finally(() => setLoadingIp(false));
+        .catch(() => {});
     }
   }, [isOpen]);
 
@@ -301,7 +294,6 @@ export const LanMultiplayerModal: React.FC<LanMultiplayerModalProps> = ({
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-60 overflow-y-auto pr-1">
                     {players.map((p) => {
                       const c = p.character;
-                      const hpPct = c ? Math.max(0, Math.min(100, (c.currentHp / (c.maxHp || 1)) * 100)) : 100;
                       return (
                         <div
                           key={p.id}

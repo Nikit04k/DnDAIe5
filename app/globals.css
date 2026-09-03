@@ -150,57 +150,158 @@ button, a, input, textarea, select {
   animation: shake 0.4s ease-in-out;
 }
 
-/* Prevent unwanted scroll chaining and page redraws */
-html, body {
-  overscroll-behavior-y: none;
+/* =========================================================
+   VINTAGE ANTIQUE PARCHMENT & TAROT CARD STYLES
+   ========================================================= */
+
+.font-cinzel {
+  font-family: var(--font-cinzel), serif;
 }
 
-/* Mystical Rune Circle pulse animation */
-@keyframes runeGlow {
-  0%, 100% {
-    opacity: 0.45;
-    filter: drop-shadow(0 0 25px rgba(56, 189, 248, 0.35));
-    transform: scale(1);
+.font-serif-vintage {
+  font-family: 'Georgia', 'Palatino Linotype', 'Book Antiqua', 'Times New Roman', serif;
+}
+
+/* Authentic Weathered Parchment Card */
+.parchment-card {
+  background: linear-gradient(135deg, #f7f1df 0%, #ede2c8 50%, #e3d3b4 100%);
+  color: #2a1810;
+  border: 2px solid #8c6a38;
+  box-shadow:
+    inset 0 0 18px rgba(120, 80, 20, 0.22),
+    0 4px 14px -2px rgba(0, 0, 0, 0.45);
+  border-radius: 12px;
+  position: relative;
+}
+
+/* Dark-framed mystic parchment card for high contrast */
+.parchment-dark {
+  background: linear-gradient(180deg, #1f1a16 0%, #15120f 100%);
+  color: #edd8b4;
+  border: 1.5px solid #8a6936;
+  box-shadow:
+    inset 0 0 20px rgba(0, 0, 0, 0.6),
+    0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+/* Curved Ornate Scroll Ribbon */
+.parchment-ribbon {
+  background: linear-gradient(180deg, #fbf7ee 0%, #f1e4c7 60%, #e4d1aa 100%);
+  border: 2.5px solid #7c5a2c;
+  color: #24140b;
+  box-shadow:
+    inset 0 2px 4px rgba(255, 255, 255, 0.8),
+    inset 0 -3px 8px rgba(100, 60, 15, 0.25),
+    0 4px 15px rgba(0, 0, 0, 0.35);
+  border-radius: 20px;
+  overflow: hidden;
+}
+
+/* Top dropdown drawer slide down animation */
+@keyframes dropdownSlideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-dropdownSlideDown {
+  animation: dropdownSlideDown 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Subtle ink reveal for Master responses */
+@keyframes inkReveal {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-ink-reveal {
+  animation: inkReveal 0.3s ease-out forwards;
+}
+
+/* Tactile 3D D20 roll tumble (subtle and smooth) */
+@keyframes diceTumble {
+  0% {
+    transform: rotateX(0deg) rotateY(0deg) scale(0.9);
   }
   50% {
-    opacity: 0.60;
-    filter: drop-shadow(0 0 38px rgba(56, 189, 248, 0.55));
-    transform: scale(1.015);
+    transform: rotateX(360deg) rotateY(180deg) scale(1.08);
+  }
+  100% {
+    transform: rotateX(720deg) rotateY(360deg) scale(1);
   }
 }
 
-.animate-rune-glow {
-  animation: runeGlow 8s ease-in-out infinite;
+.animate-dice-tumble {
+  animation: diceTumble 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-/* GPU Performance / Saver Mode Styles */
+/* Level Up Golden Banner Pulse */
+@keyframes levelUpGlow {
+  0%, 100% {
+    box-shadow: 0 0 20px rgba(245, 158, 11, 0.4);
+    border-color: rgba(245, 158, 11, 0.8);
+  }
+  50% {
+    box-shadow: 0 0 35px rgba(245, 158, 11, 0.75);
+    border-color: rgba(251, 191, 36, 1);
+  }
+}
+
+.animate-level-up {
+  animation: levelUpGlow 2s infinite ease-in-out;
+}
+
+/* GPU Performance / Weak PC Mode Styles (Disable animations & heavy filters) */
 .gpu-saver *,
 .gpu-saver *::before,
 .gpu-saver *::after {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
 }
 
 .gpu-saver .shadow-2xl,
-.gpu-saver .shadow-xl {
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4) !important;
+.gpu-saver .shadow-xl,
+.gpu-saver .shadow-lg,
+.gpu-saver .shadow-md {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3) !important;
 }
 
 .gpu-saver .glow-gold,
 .gpu-saver .glow-ruby,
 .gpu-saver .glow-arcane {
   box-shadow: none !important;
+  filter: none !important;
 }
 
 .gpu-saver .animate-pulse,
 .gpu-saver .animate-ping,
 .gpu-saver .animate-bounce,
-.gpu-saver .animate-rune-glow {
+.gpu-saver .animate-spin,
+.gpu-saver .animate-rune-glow,
+.gpu-saver .animate-dice-tumble,
+.gpu-saver .animate-ink-reveal,
+.gpu-saver .animate-level-up,
+.gpu-saver .animate-dropdownSlideDown,
+.gpu-saver .animate-fadeIn {
   animation: none !important;
 }
 
 .gpu-saver .animate-rune-glow {
-  opacity: 0.48 !important;
+  opacity: 0.5 !important;
 }
 
 /* Respect user's motion preferences */

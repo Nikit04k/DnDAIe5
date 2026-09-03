@@ -18,7 +18,6 @@ import {
 import {
   Dices,
   Sparkles,
-  AlertTriangle,
   ShieldAlert,
   ArrowUpRight,
   ArrowDownRight,
@@ -262,7 +261,7 @@ export const ActionRollCard: React.FC<ActionRollCardProps> = ({
         disabled={isRolling || loading}
         className="w-full py-3.5 sm:py-4 bg-gradient-to-r from-amber-600 via-amber-500 to-amber-600 hover:from-amber-500 hover:to-amber-400 text-slate-950 font-cinzel font-extrabold text-sm sm:text-base rounded-xl shadow-lg shadow-amber-600/30 transition transform active:scale-[0.99] disabled:opacity-50 flex items-center justify-center gap-3 cursor-pointer"
       >
-        <Dices className={`w-5 h-5 ${isRolling ? 'animate-spin' : ''}`} />
+        <Dices className={`w-5 h-5 ${isRolling ? 'animate-dice-tumble' : ''}`} />
         <span>
           {isRolling
             ? `Бросаем кубик... [${displayNumber || '?'}]`

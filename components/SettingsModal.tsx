@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { WorldSettings } from '@/types/dnd';
+import { WorldSettings, GameDifficulty } from '@/types/dnd';
+import { DIFFICULTY_PROFILES, DIFFICULTY_ORDER } from '@/lib/difficultySettings';
 import {
   X,
   Key,
@@ -21,7 +22,6 @@ import {
   Loader2,
   Play,
   PlusCircle,
-  Wand2,
   Zap,
   AlertTriangle,
   MessageSquare,
@@ -30,11 +30,6 @@ import {
   Server,
   HardDrive,
   RefreshCw,
-  Shield,
-  Activity,
-  Wifi,
-  Radio,
-  Layers,
 } from 'lucide-react';
 import {
   getStoredTtsVoice,
@@ -349,7 +344,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [tempUseLmStudio, setTempUseLmStudio] = useState(useLmStudio !== undefined ? useLmStudio : getStoredUseLmStudio());
   const [tempLmStudioUrl, setTempLmStudioUrl] = useState(lmStudioUrl || getStoredLmStudioUrl());
   const [tempLmStudioModel, setTempLmStudioModel] = useState(lmStudioModel || getStoredLmStudioModel());
-  const [tempLmStudioApiKey, setTempLmStudioApiKey] = useState(lmStudioApiKey || getStoredLmStudioApiKey());
+  const [tempLmStudioApiKey] = useState(lmStudioApiKey || getStoredLmStudioApiKey());
   const [isTestingLmStudio, setIsTestingLmStudio] = useState(false);
   const [isFetchingLmModels, setIsFetchingLmModels] = useState(false);
   const [lmStudioAvailableModels, setLmStudioAvailableModels] = useState<string[]>([]);
@@ -384,6 +379,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [tempSetting, setTempSetting] = useState(world.customSetting || '');
   const [tempTone, setTempTone] = useState(world.customTone || '');
   const [tempRules, setTempRules] = useState(world.customRules || '');
+  const [tempDifficulty, setTempDifficulty] = useState<GameDifficulty>(world.difficulty || 'standard');
   const [savedSuccess, setSavedSuccess] = useState(false);
 
   // Synchronize with latest world and Gemini settings whenever modal opens or world changes
@@ -392,6 +388,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setTempSetting(world.customSetting || '');
       setTempTone(world.customTone || '');
       setTempRules(world.customRules || '');
+      setTempDifficulty(world.difficulty || 'standard');
       const currentModel = geminiModel || getStoredGeminiModel();
       if (!validGeminiModels.includes(currentModel)) {
         setSelectedGeminiModel('gemini-3.7-flash');
@@ -474,6 +471,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setTempTone('');
     setTempRules('');
     setTempCustomPrompt('');
+    setTempDifficulty('standard');
   };
 
   const handleSelectModel = (preset: AiModelPreset) => {
@@ -889,6 +887,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       customSetting: tempSetting,
       customTone: tempTone,
       customRules: tempRules,
+      difficulty: tempDifficulty,
     });
 
     setStoredTtsProvider(tempTtsProvider);
@@ -2103,6 +2102,68 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 onChange={(e) => setTempRules(e.target.value)}
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500 min-h-[50px]"
               />
+            </div>
+
+            {/* Difficulty Mode Selector */}
+            <div className="space-y-2 pt-1 border-t border-slate-800/80">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] uppercase font-bold text-amber-400 block">
+                  Сложность кампании (3 режима):
+                </label>
+                <span className="text-[10px] text-slate-400">
+                  Влияет на лут, тактику врагов, DC и последствия
+                </span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {DIFFICULTY_ORDER.map((diffKey) => {
+                  const prof = DIFFICULTY_PROFILES[diffKey];
+                  const isSelected = tempDifficulty === diffKey;
+                  return (
+                    <button
+                      key={diffKey}
+                      type="button"
+                      onClick={() => setTempDifficulty(diffKey)}
+                      className={`p-2.5 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
+                        isSelected
+                          ? `${prof.borderClass} ring-1 ring-amber-400/50 shadow-md ${prof.bgLightClass}`
+                          : 'bg-slate-950 border-slate-800/80 text-slate-300 hover:border-slate-700'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between gap-1 mb-1">
+                          <span className="font-cinzel font-bold text-xs flex items-center gap-1.5 text-slate-100">
+                            <span>{prof.icon}</span>
+                            <span>{prof.shortName}</span>
+                          </span>
+                          <span className={`text-[9px] font-bold px-1 py-0.5 rounded border ${
+                            isSelected ? 'bg-amber-400/20 text-amber-300 border-amber-400/40' : 'bg-slate-900 text-slate-400 border-slate-800'
+                          }`}>
+                            {prof.badge}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-400 leading-tight mb-2">
+                          {prof.description}
+                        </p>
+                      </div>
+
+                      <div className="space-y-0.5 pt-1.5 border-t border-slate-800/60 text-[9px] text-slate-300">
+                        <div className="flex items-start gap-1">
+                          <span className="shrink-0 text-amber-400">🎁</span>
+                          <span className="truncate"><strong className="text-slate-200">Добыча:</strong> {prof.lootRate.split(' (')[0]}</span>
+                        </div>
+                        <div className="flex items-start gap-1">
+                          <span className="shrink-0 text-red-400">⚔️</span>
+                          <span className="truncate"><strong className="text-slate-200">Враги:</strong> {prof.enemyThreat.split(' (')[0]}</span>
+                        </div>
+                        <div className="flex items-start gap-1">
+                          <span className="shrink-0 text-cyan-400">🎲</span>
+                          <span className="truncate"><strong className="text-slate-200">DC:</strong> {prof.checkDifficulty.split(' (')[0]}</span>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
 

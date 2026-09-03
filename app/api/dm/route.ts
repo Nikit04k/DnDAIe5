@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { CharacterSheet, WorldSettings, ChatMessage, DmResponse, PartyCompanion, LorebookEntry } from '@/types/dnd';
+import { buildDifficultyPrompt } from '@/lib/difficultySettings';
 import { parseAndAdvanceTime } from '@/lib/timeUtils';
 
 
@@ -547,10 +548,6 @@ export async function POST(req: NextRequest) {
       useGemini = false,
       geminiApiKey: userGeminiApiKey,
       geminiModel: userGeminiModel,
-      useLmStudio = false,
-      lmStudioUrl: userLmStudioUrl,
-      lmStudioModel: userLmStudioModel,
-      lmStudioApiKey: userLmStudioApiKey,
     }: {
       character: CharacterSheet;
       world: WorldSettings;
@@ -579,11 +576,8 @@ export async function POST(req: NextRequest) {
       lmStudioApiKey?: string;
     } = body;
 
+    const isLmStudioActive = Boolean(body.useLmStudio);
     const isOpenRouterActive = body.useOpenRouter !== false;
-    const isLmStudioActive = Boolean(useLmStudio);
-    const lmStudioUrl = userLmStudioUrl || 'http://localhost:1234/v1';
-    const lmStudioModel = userLmStudioModel || '';
-    const lmStudioApiKey = userLmStudioApiKey || 'lm-studio';
     const geminiApiKey = (userGeminiApiKey && userGeminiApiKey.trim().length > 0 ? userGeminiApiKey.trim() : '') || process.env.GEMINI_API_KEY || '';
     const rawGeminiModel = (userGeminiModel && userGeminiModel.trim().length > 0 ? userGeminiModel.trim().replace(/^models\//, '') : 'gemini-3.7-flash');
     const geminiModel = ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash'].includes(rawGeminiModel) ? rawGeminiModel : 'gemini-3.7-flash';
@@ -733,6 +727,11 @@ ${character.backstory || character.bio ? `- Предыстория: ${character.
 ВЕСЬ ТВОЙ ОТВЕТ ДОЛЖЕН БЫТЬ СТРОГО НА РУССКОМ ЯЗЫКЕ!
 Все описания локаций, мысли, прямая речь NPC, варианты действий и статус-блок генерируются исключительно на чистом, богатом русском языке. Никаких фраз на английском или других языках!
 
+[🛡️ АВТОМАТИЧЕСКИЙ ПРОСЧЕТ НАДЕТОГО СНАРЯЖЕНИЯ НЕЙРОСЕТЬЮ]:
+- Персонаж экипирован: [${equippedList}]. Его Класс Брони (AC): ${character.ac || 10}.
+- Игрок НЕ нажимает кнопки атак вручную в интерфейсе. ТЫ САМ ОБЯЗАН видеть всё надетое снаряжение персонажа и детально просчитывать бои и сцены исходя из него!
+- В бою описывай атаки героя именно тем оружием, которое экипировано у него в руках. При вражеских атаках учитывай надетую броню и щит: описывай, как удары монстров лязгают о металл брони или блокируются щитом, если атака не пробивает AC ${character.ac || 10}.
+
 [🎒 ЖЕСТКИЙ ЗАКОН ИНВЕНТАРЯ И АВТОМАТИЧЕСКОЕ УПРАВЛЕНИЕ ПРЕДМЕТАМИ]:
 1. АБСОЛЮТНЫЙ ЗАПРЕТ НА ПРЕДМЕТЫ ИЗ ВОЗДУХА:
    Персонаж игрока (и любой член отряда) может использовать, доставать, пить, надевать, бросать, читать или применять ТОЛЬКО те предметы, которые ПРЯМО ПЕРЕЧИСЛЕНЫ в его списке «🛡️ НАДЕТОЕ СНАРЯЖЕНИЕ» или «🎒 РЮКЗАК И РАСХОДНЫЕ ПРЕДМЕТЫ»!
@@ -819,6 +818,7 @@ ${charDetails}
   "state_update": {
     "hp_change": -4,
     "gold_change": 15,
+    "xp_change": 75,
     "added_items": ["Зелье лечения (2d4+2)"],
     "removed_items": [],
     "location_name": "Название текущей локации",
@@ -844,7 +844,15 @@ ${charDetails}
 [⚡ ПРАВИЛА ОБНОВЛЕНИЯ ЛИСТА ПЕРСОНАЖА И ВРЕМЕНИ В STATE_UPDATE]:
 1. АДАПТИВНОЕ ИГРОВОЕ ВРЕМЯ ("time_passed_minutes" и "new_time"): Управляй ходом часов и суток мира.
 2. УРОН И ЛЕЧЕНИЕ: Отрицательное число при уроне (например: "hp_change": -6), положительное при лечении ("hp_change": 8).
-3. ПРЕДМЕТЫ И ЗОЛОТО: Добавляй лут в "added_items", расходники в "removed_items", золото в "gold_change".`;
+3. ПРЕДМЕТЫ И ЗОЛОТО: Добавляй лут в "added_items", расходники в "removed_items", золото в "gold_change".
+4. НАГРАДА ЗА ОПЫТ D&D 5e ("xp_change"): Всегда награждай персонажей опытом за победы над врагами, успешные проверки навыков, разгаданные тайны, переговоры и сюжетные достижения (например: "xp_change": 50 за легкую стычку/проверку, 100-250 за опасный бой/квест, 500+ за босса).
+
+[🌍 СЕТТИНГ И АТМОСФЕРА МИРА]:
+- Сеттинг: ${world.customSetting || 'Классическое темное фэнтези Забытых Королевств'}
+- Тон повествования: ${world.customTone || 'Героический, с элементами опасности и тайн'}
+${world.customRules ? `- Особые правила мира: ${world.customRules}\n` : ''}
+${buildDifficultyPrompt(world.difficulty)}
+${userCustomPrompt ? `\n[ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ ИГРОКА]:\n${userCustomPrompt}` : ''}`;
 
     // 6. Build chat messages payload with depth anchor
     const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [

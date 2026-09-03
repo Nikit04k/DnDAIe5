@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Dices, X, Plus, Minus, RotateCcw, ArrowUpRight, ArrowDownRight, Send } from 'lucide-react';
+import { Dices, X, Plus, Minus, ArrowUpRight, ArrowDownRight, Send } from 'lucide-react';
 import { playDiceRollSound, playCriticalHitSound, playCriticalFailSound } from '@/lib/diceSound';
 import { DiceRollResult } from '@/types/dnd';
 

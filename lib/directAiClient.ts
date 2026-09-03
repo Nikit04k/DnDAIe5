@@ -1,4 +1,5 @@
 import { CharacterSheet, WorldSettings, ChatMessage, DmResponse, PartyCompanion, LorebookEntry } from '@/types/dnd';
+import { buildDifficultyPrompt } from '@/lib/difficultySettings';
 import { parseAndAdvanceTime } from '@/lib/timeUtils';
 
 export interface DirectDmRequest {
@@ -336,13 +337,8 @@ export async function executeDirectDmTurn(request: DirectDmRequest): Promise<DmR
   const {
     world,
     character,
-    partyPlayers = [],
     history = [],
     action,
-    partyCompanions = [],
-    journalEntries = [],
-    lorebookEntries = [],
-    storySummary = '',
     inGameDay = 1,
     inGameMinutes = 480,
     inGameTime = '',
@@ -376,6 +372,10 @@ export async function executeDirectDmTurn(request: DirectDmRequest): Promise<DmR
   const openRouterApiKey = (userApiKey && userApiKey.trim().length > 0 ? userApiKey.trim() : '');
   const isOpenRouterActive = Boolean(useOpenRouter !== false);
 
+  const equippedList = character.equippedItems && character.equippedItems.length > 0
+    ? character.equippedItems.join(', ')
+    : 'Базовая походная одежда';
+
   const inventoryList = character.inventory && character.inventory.length > 0
     ? character.inventory.join(', ')
     : 'Пусто (только базовые лохмотья)';
@@ -383,17 +383,23 @@ export async function executeDirectDmTurn(request: DirectDmRequest): Promise<DmR
   const systemInstruction = `Ты — элитный Dungeon Master D&D 5-й редакции.
 Ведешь атмосферное, захватывающее и честное приключение на русском языке.
 
-ПРАВИЛО ИНВЕНТАРЯ И АВТОМАТИЧЕСКОЕ ДОБАВЛЕНИЕ ПРЕДМЕТОВ:
-1. Инвентарь персонажа (${character.name}): [${inventoryList}].
-2. Золото: ${character.gold} gp.
-3. Игрок НЕ МОЖЕТ использовать или доставать предметы, которых нет в этом списке.
-4. Игрок не может добавлять предметы вручную. Новые предметы в инвентарь добавляешь ТОЛЬКО ТЫ через "added_items" в state_update!
-5. Когда в сюжете найдены предметы/лут/награда или игрок пишет «я беру...», «я взял...», «забираю...», «подбираю...», «покупаю...» — обязательно добавь эти предметы в "added_items": ["Название предмета"] в state_update! При покупке спиши золото через "gold_change": -X. При расходе укажи предмет в "removed_items".
+ПРАВИЛО СНАРЯЖЕНИЯ, ИНВЕНТАРЯ И БОЯ:
+1. НАДЕТОЕ СНАРЯЖЕНИЕ ГЕРОЯ (${character.name}): [${equippedList}].
+   - Класс Брони (AC): ${character.ac || 10}, Здоровье: ${character.currentHp || 10}/${character.maxHp || 10} HP, Уровень: ${character.level || 1} (${character.race || 'Человек'} ${character.class || 'Воин'}).
+   - ОБЯЗАТЕЛЬНЫЙ ПРОСЧЕТ СНАРЯЖЕНИЯ НЕЙРОСЕТЬЮ: Игрок не нажимает кнопки экипировки вручную — ты ОБЯЗАН сам видеть всё надетое снаряжение персонажа и детально просчитывать бои и сцены исходя из него!
+     * Атаки героя: описывай удары и действия именно тем оружием, которое сейчас экипировано у него в руках (например, рубящие взмахи мечом, уколы кинжалом, выстрелы из лука).
+     * Защита героя: учитывай надетую броню и щит при атаках монстров и врагов — описывай, как вражеские удары отскакивают от металла кольчуги/латов или блокируются щитом, если атака не пробивает AC ${character.ac || 10}.
+2. РЮКЗАК И РАСХОДНЫЕ ПРЕДМЕТЫ: [${inventoryList}].
+   - Золото: ${character.gold} gp.
+   - Игрок НЕ МОЖЕТ доставать или использовать предметы из воздуха, которых нет в этих списках.
+   - Игрок не может добавлять предметы вручную. Новые предметы в инвентарь добавляешь ТОЛЬКО ТЫ через "added_items" в state_update!
+   - Когда в сюжете найдены предметы/лут/награда или игрок пишет «я беру...», «я взял...», «забираю...», «подбираю...», «покупаю...» — обязательно добавь эти предметы в "added_items": ["Название предмета"] в state_update! При покупке спиши золото через "gold_change": -X. При расходе укажи предмет в "removed_items".
 
 МИР И СЕТТИНГ:
 - Сеттинг: ${world.customSetting || 'Классическое темное фэнтези Забытых Королевств'}
 - Тон: ${world.customTone || 'Героический, с элементами опасности и тайн'}
 - Время в игре: ${formattedClock}
+${buildDifficultyPrompt(world.difficulty)}
 ${userCustomPrompt ? `\nДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ:\n${userCustomPrompt}` : ''}
 
 ОТВЕТ ДОЛЖЕН БЫТЬ СТРОГО В ВИДЕ ПОНЯТНОГО РАССКАЗА С БЛОКОМ JSON В КОНЦЕ:
@@ -404,12 +410,14 @@ ${userCustomPrompt ? `\nДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ:\n${us
   "state_update": {
     "hp_change": 0,
     "gold_change": 0,
+    "xp_change": 50,
     "added_items": [],
     "removed_items": [],
     "location_name": "Название локации"
   }
 }
-\`\`\``;
+\`\`\`
+Награждай персонажа опытом в "xp_change" за преодоление трудностей, победы в боях и успешные броски.`;
 
   const messagesPayload: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
     { role: 'system', content: systemInstruction },

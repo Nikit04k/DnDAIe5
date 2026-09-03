@@ -5,10 +5,12 @@ import {
   CharacterPreset,
   CharacterSheet,
   WorldSettings,
+  GameDifficulty,
   Stats,
   AbilityScoreKey,
   SkillName,
 } from '@/types/dnd';
+import { DIFFICULTY_PROFILES, DIFFICULTY_ORDER } from '@/lib/difficultySettings';
 import {
   CHARACTER_PRESETS,
   getAbilityModifier,
@@ -16,47 +18,40 @@ import {
   POINT_BUY_TOTAL_BUDGET,
   getPointBuyCost,
   getTotalPointBuySpent,
-  STANDARD_ARRAY,
   DND_5E_RACES,
   DND_5E_CLASSES,
-  calculateDnd5eHp,
   getDnd5eHpDetails,
   calculateDnd5eAc,
   Dnd5eRace,
   Dnd5eClass,
   DND_5E_ARMOR_OPTIONS,
-  Dnd5eArmorOption,
   DND_5E_PRIMARY_WEAPONS,
-  Dnd5eWeaponOption,
   DND_5E_SECONDARY_OPTIONS,
-  Dnd5eSecondaryOption,
   DND_5E_ADVENTURING_PACKS,
-  Dnd5eAdventuringPack,
   ABILITY_FULL_NAMES,
   normalizeRationItem,
+  isClassSpellcaster,
+  CANTRIP_SUGGESTIONS_BY_CLASS,
+  SPELL_SUGGESTIONS_BY_CLASS,
 } from '@/lib/dndRules';
 import {
   Sparkles,
   Shield,
   Heart,
-  Dices,
   Swords,
   Globe,
   Feather,
   Trash2,
-  BookOpen,
   Compass,
   User,
   Scroll,
-  HelpCircle,
   Plus,
   Minus,
-  CheckCircle2,
   Zap,
   Package,
   X,
 } from 'lucide-react';
-import { playDiceRollSound, playCriticalHitSound } from '@/lib/diceSound';
+import { playDiceRollSound } from '@/lib/diceSound';
 
 interface CharacterCreatorModalProps {
   isOpen: boolean;
@@ -92,6 +87,8 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
   const [customTone, setCustomTone] = useState(initialWorld?.customTone || '');
   const [customRules, setCustomRules] = useState(initialWorld?.customRules || '');
   const [startingScene, setStartingScene] = useState(initialWorld?.startingScene || '');
+  const [xpMultiplier, setXpMultiplier] = useState<number>(initialWorld?.xpMultiplier || 1);
+  const [difficulty, setDifficulty] = useState<GameDifficulty>(initialWorld?.difficulty || 'standard');
 
   // Synchronize world parameters when modal opens
   useEffect(() => {
@@ -99,6 +96,8 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
       if (initialWorld.customSetting) setCustomSetting(initialWorld.customSetting);
       if (initialWorld.customTone) setCustomTone(initialWorld.customTone);
       if (initialWorld.customRules) setCustomRules(initialWorld.customRules);
+      if (initialWorld.xpMultiplier) setXpMultiplier(initialWorld.xpMultiplier);
+      if (initialWorld.difficulty) setDifficulty(initialWorld.difficulty);
     }
   }, [isOpen, initialWorld]);
 
@@ -351,12 +350,24 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
 
     const clampedGold = Math.max(0, Math.min(500, gold || 0));
 
+    const isSpellcasterClass = isClassSpellcaster(characterClass);
+    const initialCantrips = isSpellcasterClass
+      ? (CANTRIP_SUGGESTIONS_BY_CLASS[characterClass]?.slice(0, 3) || ['Свет', 'Огненный снаряд'])
+      : [];
+    const initialSpells = isSpellcasterClass
+      ? (SPELL_SUGGESTIONS_BY_CLASS[characterClass]?.slice(0, 2) || ['Волшебная стрела', 'Щит'])
+      : [];
+
     const finalChar: CharacterSheet = {
       name: name.trim() || 'Безымянный герой',
       class: characterClass.trim() || 'Странник',
       race: race.trim() || 'Человек',
       background: background.trim() || 'Искатель приключений',
       level: 1,
+      experience: 0,
+      xpMultiplier: xpMultiplier,
+      cantrips: initialCantrips,
+      spells: initialSpells,
       maxHp: computedMaxHp,
       currentHp: computedMaxHp,
       tempHp: 0,
@@ -384,6 +395,8 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
       customTone: customTone.trim(),
       customRules: customRules.trim(),
       startingScene: startingScene.trim(),
+      xpMultiplier: xpMultiplier,
+      difficulty: difficulty,
     };
 
     onStartCampaign(finalChar, finalWorld);
@@ -710,6 +723,100 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
                   onChange={(e) => setStartingScene(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500 min-h-[75px]"
                 />
+              </div>
+
+              {/* XP Multiplier Selector */}
+              <div>
+                <label className="text-[11px] uppercase font-bold text-amber-400 block mb-1">
+                  Мультипликатор опыта (XP Multiplier):
+                </label>
+                <p className="text-[10px] text-slate-400 mb-2">
+                  Определяет, с какой скоростью персонаж будет получать опыт от Мастера (AI) за победы и квесты.
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {[
+                    { val: 0.5, label: '0.5x', desc: 'Медленная прокачка / Хардкор' },
+                    { val: 1.0, label: '1.0x', desc: 'Стандартный темп D&D 5e' },
+                    { val: 1.5, label: '1.5x', desc: 'Ускоренное развитие' },
+                    { val: 2.0, label: '2.0x', desc: 'Быстрый / Эпический рост' },
+                  ].map((m) => (
+                    <button
+                      key={m.val}
+                      type="button"
+                      onClick={() => setXpMultiplier(m.val)}
+                      className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
+                        xpMultiplier === m.val
+                          ? 'bg-amber-500/20 border-amber-400 text-amber-200 ring-1 ring-amber-400/50 shadow-md'
+                          : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      <div className="font-cinzel font-bold text-sm text-amber-300">{m.label}</div>
+                      <div className="text-[10px] text-slate-400 leading-tight mt-0.5">{m.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Difficulty Mode Selector */}
+              <div className="space-y-2 pt-1 border-t border-slate-800/80">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] uppercase font-bold text-amber-400 block">
+                    Уровень сложности кампании (3 режима):
+                  </label>
+                  <span className="text-[10px] text-slate-400 font-semibold">
+                    Меняет шансы лута, врагов, сложность DC и сюжет
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+                  {DIFFICULTY_ORDER.map((diffKey) => {
+                    const prof = DIFFICULTY_PROFILES[diffKey];
+                    const isSelected = difficulty === diffKey;
+                    return (
+                      <button
+                        key={diffKey}
+                        type="button"
+                        onClick={() => setDifficulty(diffKey)}
+                        className={`p-3 rounded-2xl border text-left transition cursor-pointer flex flex-col justify-between relative ${
+                          isSelected
+                            ? `${prof.borderClass} ring-1 ring-amber-400/50 shadow-md ${prof.bgLightClass}`
+                            : 'bg-slate-950/90 border-slate-800/80 text-slate-300 hover:border-slate-700'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-1 mb-1">
+                            <span className="font-cinzel font-bold text-xs flex items-center gap-1.5 text-slate-100">
+                              <span>{prof.icon}</span>
+                              <span>{prof.shortName}</span>
+                            </span>
+                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
+                              isSelected ? 'bg-amber-400/20 text-amber-300 border-amber-400/40' : 'bg-slate-900 text-slate-400 border-slate-800'
+                            }`}>
+                              {prof.badge}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 leading-snug mb-2">
+                            {prof.description}
+                          </p>
+                        </div>
+
+                        <div className="space-y-1 pt-2 border-t border-slate-800/60 text-[10px] text-slate-300">
+                          <div className="flex items-start gap-1">
+                            <span className="shrink-0 text-amber-400">🎁</span>
+                            <span className="line-clamp-2"><strong className="text-slate-200">Добыча:</strong> {prof.lootRate}</span>
+                          </div>
+                          <div className="flex items-start gap-1">
+                            <span className="shrink-0 text-red-400">⚔️</span>
+                            <span className="line-clamp-2"><strong className="text-slate-200">Враги:</strong> {prof.enemyThreat}</span>
+                          </div>
+                          <div className="flex items-start gap-1">
+                            <span className="shrink-0 text-cyan-400">🎲</span>
+                            <span className="line-clamp-2"><strong className="text-slate-200">DC:</strong> {prof.checkDifficulty}</span>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           )}

@@ -871,3 +871,136 @@ export function removeItemFromInventory(inventory: string[], itemToRemove: strin
   return currentInv.filter((_, i) => i !== existingIdx);
 }
 
+// ==========================================
+// D&D 5E EXPERIENCE & LEVEL PROGRESSION
+// ==========================================
+
+export interface LevelThreshold {
+  level: number;
+  xp: number;
+  proficiencyBonus: number;
+}
+
+export const DND5E_LEVEL_XP_THRESHOLDS: LevelThreshold[] = [
+  { level: 1, xp: 0, proficiencyBonus: 2 },
+  { level: 2, xp: 300, proficiencyBonus: 2 },
+  { level: 3, xp: 900, proficiencyBonus: 2 },
+  { level: 4, xp: 2700, proficiencyBonus: 2 },
+  { level: 5, xp: 6500, proficiencyBonus: 3 },
+  { level: 6, xp: 14000, proficiencyBonus: 3 },
+  { level: 7, xp: 23000, proficiencyBonus: 3 },
+  { level: 8, xp: 34000, proficiencyBonus: 3 },
+  { level: 9, xp: 48000, proficiencyBonus: 4 },
+  { level: 10, xp: 64000, proficiencyBonus: 4 },
+  { level: 11, xp: 85000, proficiencyBonus: 4 },
+  { level: 12, xp: 100000, proficiencyBonus: 4 },
+  { level: 13, xp: 120000, proficiencyBonus: 5 },
+  { level: 14, xp: 140000, proficiencyBonus: 5 },
+  { level: 15, xp: 165000, proficiencyBonus: 5 },
+  { level: 16, xp: 195000, proficiencyBonus: 5 },
+  { level: 17, xp: 225000, proficiencyBonus: 6 },
+  { level: 18, xp: 265000, proficiencyBonus: 6 },
+  { level: 19, xp: 305000, proficiencyBonus: 6 },
+  { level: 20, xp: 355000, proficiencyBonus: 6 },
+];
+
+export function getLevelFromXp(xp: number): {
+  level: number;
+  proficiencyBonus: number;
+  currentLevelMinXp: number;
+  nextLevelXp: number;
+  progressPercent: number;
+} {
+  const safeXp = Math.max(0, xp || 0);
+  let current = DND5E_LEVEL_XP_THRESHOLDS[0];
+  let next = DND5E_LEVEL_XP_THRESHOLDS[1];
+
+  for (let i = DND5E_LEVEL_XP_THRESHOLDS.length - 1; i >= 0; i--) {
+    if (safeXp >= DND5E_LEVEL_XP_THRESHOLDS[i].xp) {
+      current = DND5E_LEVEL_XP_THRESHOLDS[i];
+      next = DND5E_LEVEL_XP_THRESHOLDS[Math.min(i + 1, DND5E_LEVEL_XP_THRESHOLDS.length - 1)];
+      break;
+    }
+  }
+
+  const range = next.xp - current.xp;
+  const progress = range > 0 ? Math.min(100, Math.max(0, Math.round(((safeXp - current.xp) / range) * 100))) : 100;
+
+  return {
+    level: current.level,
+    proficiencyBonus: current.proficiencyBonus,
+    currentLevelMinXp: current.xp,
+    nextLevelXp: next.xp,
+    progressPercent: progress,
+  };
+}
+
+export const CLASS_HIT_DICE: Record<string, { die: number; avgHp: number; isSpellcaster: boolean }> = {
+  'Воин': { die: 10, avgHp: 6, isSpellcaster: false },
+  'Fighter': { die: 10, avgHp: 6, isSpellcaster: false },
+  'Варвар': { die: 12, avgHp: 7, isSpellcaster: false },
+  'Barbarian': { die: 12, avgHp: 7, isSpellcaster: false },
+  'Паладин': { die: 10, avgHp: 6, isSpellcaster: true },
+  'Paladin': { die: 10, avgHp: 6, isSpellcaster: true },
+  'Следопыт': { die: 10, avgHp: 6, isSpellcaster: true },
+  'Ranger': { die: 10, avgHp: 6, isSpellcaster: true },
+  'Жрец': { die: 8, avgHp: 5, isSpellcaster: true },
+  'Cleric': { die: 8, avgHp: 5, isSpellcaster: true },
+  'Друид': { die: 8, avgHp: 5, isSpellcaster: true },
+  'Druid': { die: 8, avgHp: 5, isSpellcaster: true },
+  'Плут': { die: 8, avgHp: 5, isSpellcaster: false },
+  'Rogue': { die: 8, avgHp: 5, isSpellcaster: false },
+  'Монах': { die: 8, avgHp: 5, isSpellcaster: false },
+  'Monk': { die: 8, avgHp: 5, isSpellcaster: false },
+  'Бард': { die: 8, avgHp: 5, isSpellcaster: true },
+  'Bard': { die: 8, avgHp: 5, isSpellcaster: true },
+  'Колдун': { die: 8, avgHp: 5, isSpellcaster: true },
+  'Warlock': { die: 8, avgHp: 5, isSpellcaster: true },
+  'Волшебник': { die: 6, avgHp: 4, isSpellcaster: true },
+  'Wizard': { die: 6, avgHp: 4, isSpellcaster: true },
+  'Чародей': { die: 6, avgHp: 4, isSpellcaster: true },
+  'Sorcerer': { die: 6, avgHp: 4, isSpellcaster: true },
+};
+
+export function calculateHpGainOnLevelUp(className: string, conScore: number): number {
+  const norm = Object.keys(CLASS_HIT_DICE).find((k) => k.toLowerCase() === className.toLowerCase());
+  const info = norm ? CLASS_HIT_DICE[norm] : { avgHp: 5, die: 8, isSpellcaster: false };
+  const conMod = getAbilityModifier(conScore);
+  return Math.max(1, info.avgHp + conMod);
+}
+
+export function isClassSpellcaster(className: string): boolean {
+  const norm = Object.keys(CLASS_HIT_DICE).find((k) => k.toLowerCase() === className.toLowerCase());
+  return norm ? CLASS_HIT_DICE[norm].isSpellcaster : false;
+}
+
+export const CANTRIP_SUGGESTIONS_BY_CLASS: Record<string, string[]> = {
+  'Волшебник': ['Огненный снаряд (Fire Bolt)', 'Луч холода (Ray of Frost)', 'Волшебная рука (Mage Hand)', 'Свет (Light)', 'Малая иллюзия (Minor Illusion)', 'Брызги кислоты (Acid Splash)'],
+  'Wizard': ['Огненный снаряд (Fire Bolt)', 'Луч холода (Ray of Frost)', 'Волшебная рука (Mage Hand)', 'Свет (Light)', 'Малая иллюзия (Minor Illusion)', 'Брызги кислоты (Acid Splash)'],
+  'Чародей': ['Огненный снаряд (Fire Bolt)', 'Электрошок (Shocking Grasp)', 'Волшебная рука (Mage Hand)', 'Фокусы (Prestidigitation)', 'Починка (Mending)'],
+  'Sorcerer': ['Огненный снаряд (Fire Bolt)', 'Электрошок (Shocking Grasp)', 'Волшебная рука (Mage Hand)', 'Фокусы (Prestidigitation)', 'Починка (Mending)'],
+  'Жрец': ['Священное пламя (Sacred Flame)', 'Указание (Guidance)', 'Пощада умирающих (Spare the Dying)', 'Свет (Light)', 'Сопротивление (Resistance)'],
+  'Cleric': ['Священное пламя (Sacred Flame)', 'Указание (Guidance)', 'Пощада умирающих (Spare the Dying)', 'Свет (Light)', 'Сопротивление (Resistance)'],
+  'Друид': ['Терновый кнут (Thorn Whip)', 'Сотворение пламени (Produce Flame)', 'Указание (Guidance)', 'Искусство друидов (Druidcraft)'],
+  'Druid': ['Терновый кнут (Thorn Whip)', 'Сотворение пламени (Produce Flame)', 'Указание (Guidance)', 'Искусство друидов (Druidcraft)'],
+  'Бард': ['Злая насмешка (Vicious Mockery)', 'Пляшущие огоньки (Dancing Lights)', 'Волшебная рука (Mage Hand)', 'Фокусы (Prestidigitation)'],
+  'Bard': ['Злая насмешка (Vicious Mockery)', 'Пляшущие огоньки (Dancing Lights)', 'Волшебная рука (Mage Hand)', 'Фокусы (Prestidigitation)'],
+  'Колдун': ['Мистический залп (Eldritch Blast)', 'Холод могилы (Chill Touch)', 'Волшебная рука (Mage Hand)', 'Малая иллюзия (Minor Illusion)'],
+  'Warlock': ['Мистический залп (Eldritch Blast)', 'Холод могилы (Chill Touch)', 'Волшебная рука (Mage Hand)', 'Малая иллюзия (Minor Illusion)'],
+};
+
+export const SPELL_SUGGESTIONS_BY_CLASS: Record<string, string[]> = {
+  'Волшебник': ['Волшебная стрела (Magic Missile)', 'Щит (Shield)', 'Огненный шар (Fireball)', 'Туманный шаг (Misty Step)', 'Зеркальный образ (Mirror Image)', 'Ускорение (Haste)', 'Невидимость (Invisibility)', 'Контрзаклинание (Counterspell)'],
+  'Wizard': ['Волшебная стрела (Magic Missile)', 'Щит (Shield)', 'Огненный шар (Fireball)', 'Туманный шаг (Misty Step)', 'Зеркальный образ (Mirror Image)', 'Ускорение (Haste)', 'Невидимость (Invisibility)', 'Контрзаклинание (Counterspell)'],
+  'Жрец': ['Исцеляющее слово (Healing Word)', 'Благословение (Bless)', 'Приказ (Command)', 'Духовное оружие (Spiritual Weapon)', 'Возрождение (Revivify)', 'Стражи духа (Spirit Guardians)'],
+  'Cleric': ['Исцеляющее слово (Healing Word)', 'Благословение (Bless)', 'Приказ (Command)', 'Духовное оружие (Spiritual Weapon)', 'Возрождение (Revivify)', 'Стражи духа (Spirit Guardians)'],
+  'Паладин': ['Божественная кара (Divine Smite)', 'Лечение ран (Cure Wounds)', 'Приказ (Command)', 'Охотничья метка (Hunter\'s Mark)'],
+  'Paladin': ['Божественная кара (Divine Smite)', 'Лечение ран (Cure Wounds)', 'Приказ (Command)', 'Охотничья метка (Hunter\'s Mark)'],
+  'Следопыт': ['Метка охотника (Hunter\'s Mark)', 'Град шипов (Hail of Thorns)', 'Лечение ран (Cure Wounds)', 'Туманное облако (Fog Cloud)'],
+  'Ranger': ['Метка охотника (Hunter\'s Mark)', 'Град шипов (Hail of Thorns)', 'Лечение ран (Cure Wounds)', 'Туманное облако (Fog Cloud)'],
+  'Бард': ['Исцеляющее слово (Healing Word)', 'Очарование личности (Charm Person)', 'Диссонирующий шепот (Dissonant Whispers)', 'Невидимость (Invisibility)'],
+  'Bard': ['Исцеляющее слово (Healing Word)', 'Очарование личности (Charm Person)', 'Диссонирующий шепот (Dissonant Whispers)', 'Невидимость (Invisibility)'],
+  'Колдун': ['Сглаз (Hex)', 'Руки Хадара (Arms of Hadar)', 'Адское возмездие (Hellish Rebuke)', 'Тьма (Darkness)', 'Голод Хадара (Hunger of Hadar)'],
+  'Warlock': ['Сглаз (Hex)', 'Руки Хадара (Arms of Hadar)', 'Адское возмездие (Hellish Rebuke)', 'Тьма (Darkness)', 'Голод Хадара (Hunger of Hadar)'],
+};
+
