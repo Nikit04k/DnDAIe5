@@ -304,14 +304,72 @@ button, a, input, textarea, select {
   opacity: 0.5 !important;
 }
 
-/* Respect user's motion preferences */
-@media (prefers-reduced-motion: reduce) {
-  *, ::before, ::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
+/* Screen Dice 3D Tumble and Impact Animations */
+@keyframes diceTumble3D {
+  0% {
+    transform: perspective(700px) translateY(-80px) rotateX(0deg) rotateY(0deg) rotateZ(0deg) scale(0.65);
+    opacity: 0.3;
   }
+  25% {
+    transform: perspective(700px) translateY(15px) rotateX(360deg) rotateY(180deg) rotateZ(120deg) scale(1.15);
+    opacity: 1;
+  }
+  50% {
+    transform: perspective(700px) translateY(-25px) rotateX(720deg) rotateY(360deg) rotateZ(240deg) scale(1.05);
+  }
+  75% {
+    transform: perspective(700px) translateY(8px) rotateX(1080deg) rotateY(540deg) rotateZ(300deg) scale(0.98);
+  }
+  100% {
+    transform: perspective(700px) translateY(0) rotateX(1440deg) rotateY(720deg) rotateZ(360deg) scale(1);
+  }
+}
+
+@keyframes diceImpactBounce {
+  0% { transform: scale(1.3); filter: drop-shadow(0 0 25px rgba(245, 158, 11, 0.9)); }
+  40% { transform: scale(0.92); filter: drop-shadow(0 0 15px rgba(245, 158, 11, 0.6)); }
+  70% { transform: scale(1.05); filter: drop-shadow(0 0 10px rgba(245, 158, 11, 0.4)); }
+  100% { transform: scale(1); filter: drop-shadow(0 0 8px rgba(245, 158, 11, 0.3)); }
+}
+
+@keyframes critGoldBurst {
+  0% { transform: scale(0.5); opacity: 0; filter: brightness(2.5); }
+  50% { transform: scale(1.2); opacity: 1; filter: brightness(1.8); }
+  100% { transform: scale(1); opacity: 1; filter: brightness(1); }
+}
+
+@keyframes fumbleRedBurst {
+  0% { transform: scale(0.5); opacity: 0; filter: brightness(2.5); }
+  50% { transform: scale(1.2); opacity: 1; filter: brightness(1.8); }
+  100% { transform: scale(1); opacity: 1; filter: brightness(1); }
+}
+
+@keyframes screenShake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-4px) translateY(2px); }
+  40% { transform: translateX(4px) translateY(-2px); }
+  60% { transform: translateX(-3px) translateY(-1px); }
+  80% { transform: translateX(2px) translateY(1px); }
+}
+
+.animate-dice-tumble-3d {
+  animation: diceTumble3D 0.75s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+.animate-dice-impact {
+  animation: diceImpactBounce 0.45s ease-out forwards;
+}
+
+.animate-crit-burst {
+  animation: critGoldBurst 0.6s ease-out forwards;
+}
+
+.animate-fumble-burst {
+  animation: fumbleRedBurst 0.6s ease-out forwards;
+}
+
+.animate-screen-shake {
+  animation: screenShake 0.35s ease-out;
 }
 
 

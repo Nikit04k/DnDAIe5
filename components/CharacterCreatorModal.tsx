@@ -29,6 +29,7 @@ import {
   DND_5E_SECONDARY_OPTIONS,
   DND_5E_ADVENTURING_PACKS,
   ABILITY_FULL_NAMES,
+  SKILL_RUSSIAN_NAMES,
   normalizeRationItem,
   isClassSpellcaster,
   CANTRIP_SUGGESTIONS_BY_CLASS,
@@ -141,12 +142,57 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
   const [skillProficiencies, setSkillProficiencies] = useState<SkillName[]>([
     'Athletics',
     'Perception',
-    'Acrobatics',
   ]);
 
-  // Find active race bonuses
+  // Selected spells & cantrips for spellcasting classes
+  const [selectedCantrips, setSelectedCantrips] = useState<string[]>(['Свет', 'Огненный снаряд']);
+  const [selectedSpells, setSelectedSpells] = useState<string[]>(['Волшебная стрела', 'Щит']);
+
+  // Find active race bonuses & class
   const activeRace = DND_5E_RACES.find((r) => r.id === selectedRaceId);
   const racialBonuses: Partial<Stats> = activeRace ? activeRace.bonuses : {};
+  const activeClass = DND_5E_CLASSES.find((c) => c.id === selectedClassId) || DND_5E_CLASSES[1];
+  const maxSkillChoices = activeClass.skillChoiceCount || 2;
+  const availableSkills = activeClass.availableSkills || activeClass.defaultSkills;
+  const isSpellcasterClass = isClassSpellcaster(characterClass || selectedClassId);
+  const maxCantripChoices = 3;
+  const maxSpellChoices = 2;
+
+  const handleToggleSkill = (skill: SkillName) => {
+    if (skillProficiencies.includes(skill)) {
+      if (skillProficiencies.length > 1) {
+        setSkillProficiencies(skillProficiencies.filter((s) => s !== skill));
+      }
+    } else {
+      if (skillProficiencies.length < maxSkillChoices) {
+        setSkillProficiencies([...skillProficiencies, skill]);
+      }
+    }
+  };
+
+  const handleToggleCantrip = (cantrip: string) => {
+    if (selectedCantrips.includes(cantrip)) {
+      if (selectedCantrips.length > 1) {
+        setSelectedCantrips(selectedCantrips.filter((c) => c !== cantrip));
+      }
+    } else {
+      if (selectedCantrips.length < maxCantripChoices) {
+        setSelectedCantrips([...selectedCantrips, cantrip]);
+      }
+    }
+  };
+
+  const handleToggleSpell = (spell: string) => {
+    if (selectedSpells.includes(spell)) {
+      if (selectedSpells.length > 1) {
+        setSelectedSpells(selectedSpells.filter((s) => s !== spell));
+      }
+    } else {
+      if (selectedSpells.length < maxSpellChoices) {
+        setSelectedSpells([...selectedSpells, spell]);
+      }
+    }
+  };
 
   // Compute final effective stats: Base + Racial Bonus
   const finalStats: Stats = {
@@ -198,6 +244,11 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
     setCharacterClass(classItem.nameRu.split(' ')[0]);
     setSavingThrows([...classItem.savingThrows]);
     setSkillProficiencies([...classItem.defaultSkills]);
+
+    const defaultCantrips = CANTRIP_SUGGESTIONS_BY_CLASS[classItem.nameRu.split(' ')[0]]?.slice(0, 3) || [];
+    const defaultSpells = SPELL_SUGGESTIONS_BY_CLASS[classItem.nameRu.split(' ')[0]]?.slice(0, 2) || [];
+    if (defaultCantrips.length > 0) setSelectedCantrips(defaultCantrips);
+    if (defaultSpells.length > 0) setSelectedSpells(defaultSpells);
 
     // Set sensible default armor, shield, weapons & pack based on class
     const lowerId = classItem.id.toLowerCase();
@@ -317,12 +368,32 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
   // Load a template into editable fields if player wants inspiration
   const handleLoadTemplate = (preset: CharacterPreset) => {
     setName(preset.name);
-    setRace(preset.race);
-    setCharacterClass(preset.class);
+    const matchedRace = DND_5E_RACES.find((r) =>
+      preset.race.toLowerCase().includes(r.id.toLowerCase()) ||
+      r.nameRu.toLowerCase().includes(preset.race.toLowerCase()) ||
+      preset.race.toLowerCase().includes(r.nameRu.toLowerCase())
+    ) || DND_5E_RACES[0];
+    const matchedClass = DND_5E_CLASSES.find((c) =>
+      preset.class.toLowerCase().includes(c.id.toLowerCase()) ||
+      c.nameRu.toLowerCase().includes(preset.class.toLowerCase()) ||
+      preset.class.toLowerCase().includes(c.nameRu.toLowerCase())
+    ) || DND_5E_CLASSES[1];
+
+    setSelectedRaceId(matchedRace.id);
+    setRace(matchedRace.nameRu);
+    setSelectedClassId(matchedClass.id);
+    setCharacterClass(matchedClass.nameRu.split(' ')[0]);
     setBackground(preset.background);
     setBio(preset.bio);
     setBaseStats(preset.stats);
     setGold(Math.min(500, preset.gold || 25));
+    setSkillProficiencies(preset.skillProficiencies ? [...preset.skillProficiencies] : [...matchedClass.defaultSkills]);
+    setSavingThrows(preset.savingThrowProficiencies ? [...preset.savingThrowProficiencies] : [...matchedClass.savingThrows]);
+
+    const defaultCantrips = CANTRIP_SUGGESTIONS_BY_CLASS[matchedClass.nameRu.split(' ')[0]]?.slice(0, 3) || [];
+    const defaultSpells = SPELL_SUGGESTIONS_BY_CLASS[matchedClass.nameRu.split(' ')[0]]?.slice(0, 2) || [];
+    if (defaultCantrips.length > 0) setSelectedCantrips(defaultCantrips);
+    if (defaultSpells.length > 0) setSelectedSpells(defaultSpells);
   };
 
   const isPointBuyOverspent = statMode === 'point_buy' && pointsRemaining < 0;
@@ -350,13 +421,17 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
 
     const clampedGold = Math.max(0, Math.min(500, gold || 0));
 
-    const isSpellcasterClass = isClassSpellcaster(characterClass);
-    const initialCantrips = isSpellcasterClass
-      ? (CANTRIP_SUGGESTIONS_BY_CLASS[characterClass]?.slice(0, 3) || ['Свет', 'Огненный снаряд'])
+    const isSpellcasterClass = isClassSpellcaster(characterClass || selectedClassId);
+    const finalCantrips = isSpellcasterClass
+      ? (selectedCantrips.length > 0 ? selectedCantrips : (CANTRIP_SUGGESTIONS_BY_CLASS[characterClass]?.slice(0, 3) || ['Свет', 'Огненный снаряд']))
       : [];
-    const initialSpells = isSpellcasterClass
-      ? (SPELL_SUGGESTIONS_BY_CLASS[characterClass]?.slice(0, 2) || ['Волшебная стрела', 'Щит'])
+    const finalSpells = isSpellcasterClass
+      ? (selectedSpells.length > 0 ? selectedSpells : (SPELL_SUGGESTIONS_BY_CLASS[characterClass]?.slice(0, 2) || ['Волшебная стрела', 'Щит']))
       : [];
+
+    const wisMod = getAbilityModifier(finalStats.wis);
+    const intMod = getAbilityModifier(finalStats.int);
+    const prof = 2; // Proficiency bonus 1 уровня
 
     const finalChar: CharacterSheet = {
       name: name.trim() || 'Безымянный герой',
@@ -366,13 +441,14 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
       level: 1,
       experience: 0,
       xpMultiplier: xpMultiplier,
-      cantrips: initialCantrips,
-      spells: initialSpells,
+      cantrips: finalCantrips,
+      spells: finalSpells,
+      spellSlots: isSpellcasterClass ? { level1: { max: 2, current: 2 }, "1": { max: 2, current: 2 } } : undefined,
       maxHp: computedMaxHp,
       currentHp: computedMaxHp,
       tempHp: 0,
       ac: computedAc,
-      speed: race.toLowerCase().includes('дварф') || race.toLowerCase().includes('халфлинг') ? 25 : 30,
+      speed: activeRace?.speed || 30,
       proficiencyBonus: 2,
       stats: finalStats,
       savingThrowProficiencies: savingThrows,
@@ -388,6 +464,17 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
       motivation: motivation.trim(),
       personalityTraits: personalityTraits.trim(),
       appearance: appearance.trim(),
+      // 5e VTT simulation attributes:
+      passive_stats: {
+        perception: 10 + wisMod + (skillProficiencies.includes('Perception') ? prof : 0),
+        insight: 10 + wisMod + (skillProficiencies.includes('Insight') ? prof : 0),
+        investigation: 10 + intMod + (skillProficiencies.includes('Investigation') ? prof : 0),
+      },
+      conditions: [],
+      concentration: null,
+      current_action_economy: { action_spent: false, bonus_action_spent: false, reaction_spent: false },
+      maxCarryWeight: finalStats.str * 15,
+      currentWeight: 55,
     };
 
     const finalWorld: WorldSettings = {
@@ -553,32 +640,39 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
                     placeholder="Например: Каэлин Тенеход"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-amber-500"
+                    className={`w-full bg-slate-950 border rounded-xl px-3 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none transition ${
+                      !name.trim()
+                        ? 'border-amber-500/50 focus:border-amber-400 ring-1 ring-amber-500/20'
+                        : 'border-slate-700 focus:border-amber-500'
+                    }`}
                   />
+                  {!name.trim() && (
+                    <span className="text-[9px] text-amber-400/80 font-mono mt-0.5 block">
+                      По умолчанию: «Безымянный герой»
+                    </span>
+                  )}
                 </div>
                 <div>
                   <label className="text-[11px] uppercase font-bold text-slate-400 block mb-1">
-                    Раса
+                    Раса (выбор выше)
                   </label>
-                  <input
-                    type="text"
-                    placeholder="Человек, Эльф, Тифлинг..."
-                    value={race}
-                    onChange={(e) => setRace(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-amber-500"
-                  />
+                  <div className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3 py-2.5 text-sm text-amber-200 font-semibold flex items-center justify-between shadow-inner">
+                    <span className="truncate">{race || activeRace?.nameRu}</span>
+                    <span className="text-[10px] text-slate-400 font-mono shrink-0 ml-1">
+                      {activeRace?.speed || 30} фт
+                    </span>
+                  </div>
                 </div>
                 <div>
                   <label className="text-[11px] uppercase font-bold text-slate-400 block mb-1">
-                    Класс / Специализация
+                    Класс (выбор выше)
                   </label>
-                  <input
-                    type="text"
-                    placeholder="Плут, Чародей, Паладин..."
-                    value={characterClass}
-                    onChange={(e) => setCharacterClass(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-amber-500"
-                  />
+                  <div className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3 py-2.5 text-sm text-cyan-200 font-semibold flex items-center justify-between shadow-inner">
+                    <span className="truncate">{characterClass}</span>
+                    <span className="text-[10px] text-slate-400 font-mono shrink-0 ml-1">
+                      d{activeClass?.hitDie || 10} HP
+                    </span>
+                  </div>
                 </div>
                 <div>
                   <label className="text-[11px] uppercase font-bold text-slate-400 block mb-1">
@@ -881,6 +975,16 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
                       </div>
                     </div>
 
+                    {statMode === 'point_buy' && pointsRemaining > 0 && (
+                      <div className="bg-amber-950/40 border border-amber-500/30 rounded-xl p-2.5 text-xs text-amber-200 flex items-center justify-between">
+                        <span className="flex items-center gap-2">
+                          <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
+                          <span>У вас осталось еще <strong className="text-amber-300 font-bold">{pointsRemaining}</strong> нераспределенных очков</span>
+                        </span>
+                        <span className="text-[10px] text-amber-400/80 font-mono hidden sm:inline">Рекомендуется распределить до 0</span>
+                      </div>
+                    )}
+
                     {isPointBuyOverspent && (
                       <div className="bg-red-950/80 border border-red-500/60 rounded-xl p-3 text-xs text-red-200 flex items-center justify-between shadow-lg">
                         <div className="flex items-center gap-2">
@@ -1103,6 +1207,136 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
                   </div>
                 </div>
               </div>
+
+              {/* SKILLS SELECTION */}
+              <div className="bg-slate-950/90 p-4 rounded-2xl border border-slate-800 space-y-3">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <span className="text-[11px] uppercase font-bold text-amber-400 flex items-center gap-1.5">
+                    <Feather className="w-3.5 h-3.5 text-amber-400" />
+                    Навыки класса ({skillProficiencies.length} из {maxSkillChoices})
+                  </span>
+                  <span className="text-[10px] text-slate-400">
+                    Доступно для {characterClass}: выберите {maxSkillChoices} навыка
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                  {availableSkills.map((skill) => {
+                    const isSelected = skillProficiencies.includes(skill);
+                    const canSelect = isSelected || skillProficiencies.length < maxSkillChoices;
+                    return (
+                      <button
+                        key={skill}
+                        type="button"
+                        onClick={() => handleToggleSkill(skill)}
+                        disabled={!isSelected && !canSelect}
+                        className={`p-2.5 rounded-xl text-left border transition cursor-pointer flex items-center justify-between ${
+                          isSelected
+                            ? 'bg-amber-950/80 border-amber-400 text-amber-200 shadow-md shadow-amber-500/10 ring-1 ring-amber-400/50'
+                            : canSelect
+                            ? 'bg-slate-900/60 hover:bg-slate-900 border-slate-800 text-slate-300'
+                            : 'bg-slate-950/40 border-slate-900 text-slate-600 cursor-not-allowed opacity-50'
+                        }`}
+                      >
+                        <span className="text-xs font-semibold truncate">
+                          {SKILL_RUSSIAN_NAMES[skill] || skill}
+                        </span>
+                        <span className={`w-3.5 h-3.5 rounded flex items-center justify-center text-[10px] ml-1.5 shrink-0 ${
+                          isSelected ? 'bg-amber-400 text-slate-950 font-bold' : 'border border-slate-700 text-transparent'
+                        }`}>
+                          ✓
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* SPELLCASTING SELECTION (Only for spellcasters) */}
+              {isSpellcasterClass && (
+                <div className="bg-slate-950/90 p-4 rounded-2xl border border-purple-500/30 space-y-3.5 shadow-lg shadow-purple-950/20">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <span className="text-[11px] uppercase font-bold text-purple-400 flex items-center gap-1.5">
+                      <Zap className="w-3.5 h-3.5 text-purple-400" />
+                      Книга заклинаний / Известные чары ({characterClass})
+                    </span>
+                    <span className="text-[10px] text-purple-300 bg-purple-950/60 px-2 py-0.5 rounded-md border border-purple-800/40 font-mono">
+                      1 круг: 2 ячейки
+                    </span>
+                  </div>
+
+                  {/* Cantrips */}
+                  <div>
+                    <div className="text-[10px] uppercase font-bold text-slate-400 mb-1.5 flex items-center justify-between">
+                      <span>Заговоры (0 круг): выбрано {selectedCantrips.length} из {maxCantripChoices}</span>
+                      <span className="text-[9px] text-purple-400/80 font-normal">Не расходуют ячеек</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-1.5">
+                      {(CANTRIP_SUGGESTIONS_BY_CLASS[characterClass] || ['Свет', 'Огненный снаряд', 'Малая иллюзия']).map((cantrip) => {
+                        const isSelected = selectedCantrips.includes(cantrip);
+                        const canSelect = isSelected || selectedCantrips.length < maxCantripChoices;
+                        return (
+                          <button
+                            key={cantrip}
+                            type="button"
+                            onClick={() => handleToggleCantrip(cantrip)}
+                            disabled={!isSelected && !canSelect}
+                            className={`p-2 rounded-xl text-left border transition cursor-pointer flex items-center justify-between ${
+                              isSelected
+                                ? 'bg-purple-950/80 border-purple-400 text-purple-200 shadow-md shadow-purple-500/10 ring-1 ring-purple-400/50'
+                                : canSelect
+                                ? 'bg-slate-900/60 hover:bg-slate-900 border-slate-800 text-slate-300'
+                                : 'bg-slate-950/40 border-slate-900 text-slate-600 cursor-not-allowed opacity-50'
+                            }`}
+                          >
+                            <span className="text-xs font-semibold truncate">{cantrip}</span>
+                            <span className={`w-3.5 h-3.5 rounded flex items-center justify-center text-[10px] ml-1.5 shrink-0 ${
+                              isSelected ? 'bg-purple-400 text-slate-950 font-bold' : 'border border-slate-700 text-transparent'
+                            }`}>
+                              ✓
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* 1st Level Spells */}
+                  <div>
+                    <div className="text-[10px] uppercase font-bold text-slate-400 mb-1.5 flex items-center justify-between">
+                      <span>Заклинания 1-го круга: выбрано {selectedSpells.length} из {maxSpellChoices}</span>
+                      <span className="text-[9px] text-purple-400/80 font-normal">Требуют ячейку заклинаний</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-1.5">
+                      {(SPELL_SUGGESTIONS_BY_CLASS[characterClass] || ['Волшебная стрела', 'Щит', 'Лечение ран']).map((spell) => {
+                        const isSelected = selectedSpells.includes(spell);
+                        const canSelect = isSelected || selectedSpells.length < maxSpellChoices;
+                        return (
+                          <button
+                            key={spell}
+                            type="button"
+                            onClick={() => handleToggleSpell(spell)}
+                            disabled={!isSelected && !canSelect}
+                            className={`p-2 rounded-xl text-left border transition cursor-pointer flex items-center justify-between ${
+                              isSelected
+                                ? 'bg-purple-950/80 border-purple-400 text-purple-200 shadow-md shadow-purple-500/10 ring-1 ring-purple-400/50'
+                                : canSelect
+                                ? 'bg-slate-900/60 hover:bg-slate-900 border-slate-800 text-slate-300'
+                                : 'bg-slate-950/40 border-slate-900 text-slate-600 cursor-not-allowed opacity-50'
+                            }`}
+                          >
+                            <span className="text-xs font-semibold truncate">{spell}</span>
+                            <span className={`w-3.5 h-3.5 rounded flex items-center justify-center text-[10px] ml-1.5 shrink-0 ${
+                              isSelected ? 'bg-purple-400 text-slate-950 font-bold' : 'border border-slate-700 text-transparent'
+                            }`}>
+                              ✓
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Armor & Shield Interactive Selection (Below Vitals) */}
               <div className="bg-slate-950/90 p-3.5 rounded-2xl border border-slate-800 space-y-2.5">

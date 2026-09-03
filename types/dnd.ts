@@ -44,6 +44,7 @@ export interface InventoryItem {
 }
 
 export interface CharacterSheet {
+  id?: string;
   name: string;
   class: string;
   subclass?: string;
@@ -77,6 +78,7 @@ export interface CharacterSheet {
     level1?: { max: number; current: number };
     level2?: { max: number; current: number };
     level3?: { max: number; current: number };
+    [key: string]: { max: number; current: number } | undefined;
   };
   bio?: string;             // Detailed custom lore & backstory written by player
   backstory?: string;       // Origin, history, upbringing
@@ -84,6 +86,16 @@ export interface CharacterSheet {
   appearance?: string;      // Physical description, scars, outfit
   personalityTraits?: string; // Character flaws, habits, values
   alignment?: string;
+  conditions?: string[];    // Текущие состояния персонажа (напр. "Poisoned", "Prone", "Blinded", "Paralyzed")
+  currentWeight?: number;   // Текущий вес снаряжения в фунтах
+  maxCarryWeight?: number;  // Максимальный переносимый вес (STR * 15 фунтов)
+  concentration?: { spell_name: string; duration_left_rounds?: number } | null;
+  current_action_economy?: { action_spent: boolean; bonus_action_spent: boolean; reaction_spent: boolean };
+  passive_stats?: { perception: number; insight: number; investigation: number };
+  damage_resistances?: string[]; // "fire", "slashing", etc.
+  damage_immunities?: string[];
+  damage_vulnerabilities?: string[];
+  position?: { x: number; y: number }; // 5-футовая сетка
 }
 
 export type GameDifficulty = 'story' | 'standard' | 'hardcore';
@@ -109,6 +121,7 @@ export interface RollRequirement {
   skill?: string;   // e.g. "Perception", "Stealth", "Athletics"
   dc?: number;
   reason?: string;
+  advantage_type?: 'normal' | 'advantage' | 'disadvantage'; // Преимущество или помеха на бросок
 }
 
 export interface StateUpdate {
@@ -118,9 +131,17 @@ export interface StateUpdate {
   gold_change: number;       // Change in gold (can be negative or positive)
   xp_change?: number;        // Experience points awarded by DM
   location_name?: string;    // Current location description
-  time_passed_minutes?: number; // In-game time passed in minutes (e.g. 15 for fast action, 60 for 1h, 360 for wait to evening, 600 for 10h travel, 480 for sleep)
+  time_passed_minutes?: number; // In-game time passed in minutes
   new_time?: string;         // Explicit target time (e.g. "18:00", "День 1 • 18:00")
   new_day?: number;          // Explicit target day (e.g. 2)
+  spell_slots_used?: Record<string, number>; // например: { "1": 1, "2": 0 }
+  spell_slots_recovered?: { all?: boolean; slots?: Record<string, number> };
+  conditions_added?: string[];   // например: ["Poisoned", "Prone", "Blinded"]
+  conditions_removed?: string[];
+  concentration_update?: { action: 'start' | 'maintain' | 'break'; spell_name?: string };
+  level_up_available?: { new_level: number; hit_die: string };
+  opportunity_attack_triggered?: boolean;
+  damage_details?: { amount: number; type: string };
 }
 
 export interface DmResponse {
@@ -129,6 +150,24 @@ export interface DmResponse {
   requires_roll: RollRequirement;
   suggested_actions: string[];
   state_update: StateUpdate;
+  active_combat?: {
+    is_active: boolean;
+    round: number;
+    current_turn?: string;
+    grid?: { width: number; height: number };
+    enemies: Array<{
+      id: string;
+      name: string;
+      hp: number;
+      max_hp: number;
+      ac: number;
+      position?: { x: number; y: number };
+      cover?: 'none' | 'half' | 'three_quarters' | 'full'; // +2 AC / +5 AC
+      conditions?: string[];
+      resistances?: string[];
+      vulnerabilities?: string[];
+    }>;
+  };
   nearby_npcs?: Array<{
     name: string;
     role: string;

@@ -130,24 +130,25 @@ export interface Dnd5eRace {
   nameRu: string;
   bonuses: Partial<Stats>;
   description: string;
+  speed?: number; // Скорость в футах (25 для низкорослых рас, 35 для лесного эльфа, 30 по умолчанию)
 }
 
 export const DND_5E_RACES: Dnd5eRace[] = [
-  { id: 'human', nameRu: 'Человек', bonuses: { str: 1, dex: 1, con: 1, int: 1, wis: 1, cha: 1 }, description: '+1 ко всем характеристикам' },
-  { id: 'high_elf', nameRu: 'Высший эльф', bonuses: { dex: 2, int: 1 }, description: '+2 ЛОВ, +1 ИНТ' },
-  { id: 'wood_elf', nameRu: 'Лесной эльф', bonuses: { dex: 2, wis: 1 }, description: '+2 ЛОВ, +1 МУД' },
-  { id: 'drow', nameRu: 'Дроу (Темный эльф)', bonuses: { dex: 2, cha: 1 }, description: '+2 ЛОВ, +1 ХАР' },
-  { id: 'mountain_dwarf', nameRu: 'Горный дварф', bonuses: { con: 2, str: 2 }, description: '+2 ТЕЛ, +2 СИЛ' },
-  { id: 'hill_dwarf', nameRu: 'Холмовой дварф', bonuses: { con: 2, wis: 1 }, description: '+2 ТЕЛ, +1 МУД' },
-  { id: 'half_orc', nameRu: 'Полуорк', bonuses: { str: 2, con: 1 }, description: '+2 СИЛ, +1 ТЕЛ' },
-  { id: 'half_elf', nameRu: 'Полуэльф', bonuses: { cha: 2, dex: 1, con: 1 }, description: '+2 ХАР, +1 к двум другим' },
-  { id: 'tiefling', nameRu: 'Тифлинг', bonuses: { cha: 2, int: 1 }, description: '+2 ХАР, +1 ИНТ' },
-  { id: 'dragonborn', nameRu: 'Драконорожденный', bonuses: { str: 2, cha: 1 }, description: '+2 СИЛ, +1 ХАР' },
-  { id: 'lightfoot_halfling', nameRu: 'Легконогий халфлинг', bonuses: { dex: 2, cha: 1 }, description: '+2 ЛОВ, +1 ХАР' },
-  { id: 'stout_halfling', nameRu: 'Коренастый халфлинг', bonuses: { dex: 2, con: 1 }, description: '+2 ЛОВ, +1 ТЕЛ' },
-  { id: 'rock_gnome', nameRu: 'Скальный гном', bonuses: { int: 2, con: 1 }, description: '+2 ИНТ, +1 ТЕЛ' },
-  { id: 'forest_gnome', nameRu: 'Лесной гном', bonuses: { int: 2, dex: 1 }, description: '+2 ИНТ, +1 ЛОВ' },
-  { id: 'custom', nameRu: 'Свободный выбор (+2 / +1)', bonuses: {}, description: 'Настраиваемые расовые бонусы' },
+  { id: 'human', nameRu: 'Человек', bonuses: { str: 1, dex: 1, con: 1, int: 1, wis: 1, cha: 1 }, description: '+1 ко всем характеристикам', speed: 30 },
+  { id: 'high_elf', nameRu: 'Высший эльф', bonuses: { dex: 2, int: 1 }, description: '+2 ЛОВ, +1 ИНТ', speed: 30 },
+  { id: 'wood_elf', nameRu: 'Лесной эльф', bonuses: { dex: 2, wis: 1 }, description: '+2 ЛОВ, +1 МУД', speed: 35 },
+  { id: 'drow', nameRu: 'Дроу (Темный эльф)', bonuses: { dex: 2, cha: 1 }, description: '+2 ЛОВ, +1 ХАР', speed: 30 },
+  { id: 'mountain_dwarf', nameRu: 'Горный дварф', bonuses: { con: 2, str: 2 }, description: '+2 ТЕЛ, +2 СИЛ', speed: 25 },
+  { id: 'hill_dwarf', nameRu: 'Холмовой дварф', bonuses: { con: 2, wis: 1 }, description: '+2 ТЕЛ, +1 МУД', speed: 25 },
+  { id: 'half_orc', nameRu: 'Полуорк', bonuses: { str: 2, con: 1 }, description: '+2 СИЛ, +1 ТЕЛ', speed: 30 },
+  { id: 'half_elf', nameRu: 'Полуэльф', bonuses: { cha: 2, dex: 1, con: 1 }, description: '+2 ХАР, +1 к двум другим', speed: 30 },
+  { id: 'tiefling', nameRu: 'Тифлинг', bonuses: { cha: 2, int: 1 }, description: '+2 ХАР, +1 ИНТ', speed: 30 },
+  { id: 'dragonborn', nameRu: 'Драконорожденный', bonuses: { str: 2, cha: 1 }, description: '+2 СИЛ, +1 ХАР', speed: 30 },
+  { id: 'lightfoot_halfling', nameRu: 'Легконогий халфлинг', bonuses: { dex: 2, cha: 1 }, description: '+2 ЛОВ, +1 ХАР', speed: 25 },
+  { id: 'stout_halfling', nameRu: 'Коренастый халфлинг', bonuses: { dex: 2, con: 1 }, description: '+2 ЛОВ, +1 ТЕЛ', speed: 25 },
+  { id: 'rock_gnome', nameRu: 'Скальный гном', bonuses: { int: 2, con: 1 }, description: '+2 ИНТ, +1 ТЕЛ', speed: 25 },
+  { id: 'forest_gnome', nameRu: 'Лесной гном', bonuses: { int: 2, dex: 1 }, description: '+2 ИНТ, +1 ЛОВ', speed: 25 },
+  { id: 'custom', nameRu: 'Свободный выбор (+2 / +1)', bonuses: {}, description: 'Настраиваемые расовые бонусы', speed: 30 },
 ];
 
 export interface Dnd5eClass {
@@ -157,6 +158,8 @@ export interface Dnd5eClass {
   primaryStats: AbilityScoreKey[];
   savingThrows: [AbilityScoreKey, AbilityScoreKey];
   defaultSkills: SkillName[];
+  skillChoiceCount?: number; // Количество выбираемых навыков
+  availableSkills?: SkillName[]; // Каноничный пул навыков для выбора
   defaultAc: number;
   starterEquipment: string;
 }
@@ -168,7 +171,9 @@ export const DND_5E_CLASSES: Dnd5eClass[] = [
     hitDie: 12,
     primaryStats: ['str', 'con'],
     savingThrows: ['str', 'con'],
-    defaultSkills: ['Athletics', 'Perception', 'Intimidation'],
+    defaultSkills: ['Athletics', 'Perception'],
+    skillChoiceCount: 2,
+    availableSkills: ['Animal Handling', 'Athletics', 'Intimidation', 'Nature', 'Perception', 'Survival'],
     defaultAc: 14,
     starterEquipment: 'Секира (1d12), Два ручных топора, 4 дротика, Набор путешественника',
   },
@@ -178,7 +183,9 @@ export const DND_5E_CLASSES: Dnd5eClass[] = [
     hitDie: 10,
     primaryStats: ['str', 'con'],
     savingThrows: ['str', 'con'],
-    defaultSkills: ['Athletics', 'Perception', 'Acrobatics'],
+    defaultSkills: ['Athletics', 'Perception'],
+    skillChoiceCount: 2,
+    availableSkills: ['Acrobatics', 'Animal Handling', 'Athletics', 'History', 'Insight', 'Intimidation', 'Perception', 'Survival'],
     defaultAc: 16,
     starterEquipment: 'Длинный меч (1d8+STR), Щит (+2 AC), Кольчуга (AC 16), Легкий арбалет и 20 болтов',
   },
@@ -188,7 +195,9 @@ export const DND_5E_CLASSES: Dnd5eClass[] = [
     hitDie: 10,
     primaryStats: ['str', 'cha'],
     savingThrows: ['wis', 'cha'],
-    defaultSkills: ['Athletics', 'Persuasion', 'Religion'],
+    defaultSkills: ['Athletics', 'Persuasion'],
+    skillChoiceCount: 2,
+    availableSkills: ['Athletics', 'Insight', 'Intimidation', 'Medicine', 'Persuasion', 'Religion'],
     defaultAc: 16,
     starterEquipment: 'Двуручный меч (2d6), Священный символ, Кольчуга (AC 16), Набор священника',
   },
@@ -199,6 +208,8 @@ export const DND_5E_CLASSES: Dnd5eClass[] = [
     primaryStats: ['dex', 'wis'],
     savingThrows: ['str', 'dex'],
     defaultSkills: ['Stealth', 'Perception', 'Survival'],
+    skillChoiceCount: 3,
+    availableSkills: ['Animal Handling', 'Athletics', 'Insight', 'Investigation', 'Nature', 'Perception', 'Stealth', 'Survival'],
     defaultAc: 14,
     starterEquipment: 'Длинный лук и 20 стрел, Два коротких меча, Кожаный доспех (AC 12+DEX), Набор исследователя',
   },
@@ -208,7 +219,9 @@ export const DND_5E_CLASSES: Dnd5eClass[] = [
     hitDie: 8,
     primaryStats: ['wis', 'con'],
     savingThrows: ['wis', 'cha'],
-    defaultSkills: ['Insight', 'Religion', 'Medicine'],
+    defaultSkills: ['Insight', 'Religion'],
+    skillChoiceCount: 2,
+    availableSkills: ['History', 'Insight', 'Medicine', 'Persuasion', 'Religion'],
     defaultAc: 16,
     starterEquipment: 'Боевой молот, Щит (+2 AC), Чешуйчатый доспех, Священный символ, Набор жреца',
   },
@@ -218,7 +231,9 @@ export const DND_5E_CLASSES: Dnd5eClass[] = [
     hitDie: 8,
     primaryStats: ['wis', 'con'],
     savingThrows: ['int', 'wis'],
-    defaultSkills: ['Nature', 'Animal Handling', 'Perception'],
+    defaultSkills: ['Nature', 'Perception'],
+    skillChoiceCount: 2,
+    availableSkills: ['Arcana', 'Animal Handling', 'Insight', 'Medicine', 'Nature', 'Perception', 'Religion', 'Survival'],
     defaultAc: 13,
     starterEquipment: 'Деревянный щит, Скимитар, Кожаный доспех, Фокусировка друида',
   },
@@ -229,6 +244,8 @@ export const DND_5E_CLASSES: Dnd5eClass[] = [
     primaryStats: ['cha', 'dex'],
     savingThrows: ['dex', 'cha'],
     defaultSkills: ['Performance', 'Persuasion', 'Deception'],
+    skillChoiceCount: 3,
+    availableSkills: ['Acrobatics', 'Animal Handling', 'Arcana', 'Athletics', 'Deception', 'History', 'Insight', 'Intimidation', 'Investigation', 'Medicine', 'Nature', 'Perception', 'Performance', 'Persuasion', 'Religion', 'Sleight of Hand', 'Stealth', 'Survival'],
     defaultAc: 13,
     starterEquipment: 'Рапира, Кожаный доспех, Лютня, Набор дипломата, Кинжал',
   },
@@ -239,6 +256,8 @@ export const DND_5E_CLASSES: Dnd5eClass[] = [
     primaryStats: ['dex', 'int'],
     savingThrows: ['dex', 'int'],
     defaultSkills: ['Stealth', 'Sleight of Hand', 'Acrobatics', 'Perception'],
+    skillChoiceCount: 4,
+    availableSkills: ['Acrobatics', 'Athletics', 'Deception', 'Insight', 'Intimidation', 'Investigation', 'Perception', 'Performance', 'Persuasion', 'Sleight of Hand', 'Stealth'],
     defaultAc: 14,
     starterEquipment: 'Рапира, Короткий лук и 20 стрел, Кожаный доспех, Воровские инструменты, Пара кинжалов',
   },
@@ -248,7 +267,9 @@ export const DND_5E_CLASSES: Dnd5eClass[] = [
     hitDie: 8,
     primaryStats: ['dex', 'wis'],
     savingThrows: ['str', 'dex'],
-    defaultSkills: ['Acrobatics', 'Athletics', 'Insight'],
+    defaultSkills: ['Acrobatics', 'Athletics'],
+    skillChoiceCount: 2,
+    availableSkills: ['Acrobatics', 'Athletics', 'History', 'Insight', 'Religion', 'Stealth'],
     defaultAc: 15,
     starterEquipment: 'Короткий меч, 10 дротиков, Набор исследователя подземелий',
   },
@@ -258,7 +279,9 @@ export const DND_5E_CLASSES: Dnd5eClass[] = [
     hitDie: 8,
     primaryStats: ['cha', 'con'],
     savingThrows: ['wis', 'cha'],
-    defaultSkills: ['Arcana', 'Deception', 'Intimidation'],
+    defaultSkills: ['Arcana', 'Deception'],
+    skillChoiceCount: 2,
+    availableSkills: ['Arcana', 'Deception', 'History', 'Intimidation', 'Investigation', 'Nature', 'Religion'],
     defaultAc: 12,
     starterEquipment: 'Простой кинжал, Кожаный доспех, Фокусировка заклинаний, Гримуар',
   },
@@ -269,6 +292,8 @@ export const DND_5E_CLASSES: Dnd5eClass[] = [
     primaryStats: ['cha', 'con'],
     savingThrows: ['con', 'cha'],
     defaultSkills: ['Arcana', 'Persuasion'],
+    skillChoiceCount: 2,
+    availableSkills: ['Arcana', 'Deception', 'Insight', 'Intimidation', 'Persuasion', 'Religion'],
     defaultAc: 12,
     starterEquipment: 'Легкий арбалет и 20 болтов, Два кинжала, Магическая фокусировка, Набор исследователя',
   },
@@ -278,7 +303,9 @@ export const DND_5E_CLASSES: Dnd5eClass[] = [
     hitDie: 6,
     primaryStats: ['int', 'con'],
     savingThrows: ['int', 'wis'],
-    defaultSkills: ['Arcana', 'History', 'Investigation'],
+    defaultSkills: ['Arcana', 'Investigation'],
+    skillChoiceCount: 2,
+    availableSkills: ['Arcana', 'History', 'Insight', 'Investigation', 'Medicine', 'Religion'],
     defaultAc: 11,
     starterEquipment: 'Боевой посох, Книга заклинаний, Фокусировка заклинаний, Сумка с реагентами',
   },
@@ -1004,3 +1031,62 @@ export const SPELL_SUGGESTIONS_BY_CLASS: Record<string, string[]> = {
   'Warlock': ['Сглаз (Hex)', 'Руки Хадара (Arms of Hadar)', 'Адское возмездие (Hellish Rebuke)', 'Тьма (Darkness)', 'Голод Хадара (Hunger of Hadar)'],
 };
 
+/**
+ * D&D 5e Experience Points Table (Levels 1 - 20)
+ */
+export const XP_TABLE: Record<number, number> = {
+  1: 0,
+  2: 300,
+  3: 900,
+  4: 2700,
+  5: 6500,
+  6: 14000,
+  7: 23000,
+  8: 34000,
+  9: 48000,
+  10: 64000,
+  11: 85000,
+  12: 100000,
+  13: 120000,
+  14: 140000,
+  15: 165000,
+  16: 195000,
+  17: 225000,
+  18: 265000,
+  19: 305000,
+  20: 355000,
+};
+
+/**
+ * Check if character earned enough XP to advance to a new level
+ */
+export function checkLevelUp(currentLevel: number, totalXp: number): number | null {
+  const nextLevel = currentLevel + 1;
+  if (nextLevel > 20) return null;
+  const requiredXp = XP_TABLE[nextLevel];
+  if (requiredXp !== undefined && totalXp >= requiredXp) {
+    return nextLevel;
+  }
+  return null;
+}
+
+/**
+ * Calculate D&D 5e passive score: 10 + abilityMod + (isProficient ? profBonus : 0) + bonus
+ */
+export function calculatePassiveScore(
+  abilityMod: number,
+  isProficient: boolean,
+  profBonus: number,
+  bonus: number = 0
+): number {
+  return 10 + abilityMod + (isProficient ? profBonus : 0) + bonus;
+}
+
+/**
+ * D&D 5e Cover AC bonus modifier (+2 for half cover, +5 for three-quarters cover)
+ */
+export function getCoverAcBonus(cover?: 'none' | 'half' | 'three_quarters' | 'full'): number {
+  if (cover === 'half') return 2;
+  if (cover === 'three_quarters') return 5;
+  return 0;
+}

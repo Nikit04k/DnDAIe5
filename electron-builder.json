@@ -7,7 +7,11 @@
     "buildResources": "build"
   },
   "compression": "maximum",
-  "asar": false,
+  "asar": true,
+  "asarUnpack": [
+    "node_modules/msedge-tts/**/*",
+    "node_modules/ws/**/*"
+  ],
   "files": [
     "**/*",
     "!.git/**/*",
@@ -26,10 +30,17 @@
     "!postcss.config.mjs",
     "!tailwind.config.ts",
     "!README.md",
+    "!DIFFICULTY_PROMPTS.md",
     "!.env.example",
     "!*.tsbuildinfo",
     "!*.log",
-    "!**/*.map"
+    "!**/*.map",
+    "!node_modules/**/*.md",
+    "!node_modules/**/*.txt",
+    "!node_modules/**/test/**/*",
+    "!node_modules/**/tests/**/*",
+    "!node_modules/**/__tests__/**/*",
+    "!node_modules/**/benchmark/**/*"
   ],
   "extraMetadata": {
     "main": "electron/main.js"

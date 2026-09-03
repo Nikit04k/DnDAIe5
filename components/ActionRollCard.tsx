@@ -37,6 +37,14 @@ interface ActionRollCardProps {
     isFumble: boolean;
     passed?: boolean;
   }) => void;
+  onTriggerScreenRoll?: (options: {
+    title: string;
+    subtitle?: string;
+    dc?: number;
+    modifier: number;
+    mode: 'normal' | 'advantage' | 'disadvantage';
+    onComplete: (res: any) => void;
+  }) => void;
 }
 
 export const ActionRollCard: React.FC<ActionRollCardProps> = ({
@@ -44,6 +52,7 @@ export const ActionRollCard: React.FC<ActionRollCardProps> = ({
   character,
   loading,
   onPerformRoll,
+  onTriggerScreenRoll,
 }) => {
   const [rollMode, setRollMode] = useState<'normal' | 'advantage' | 'disadvantage'>('normal');
   const [isRolling, setIsRolling] = useState(false);
@@ -87,6 +96,31 @@ export const ActionRollCard: React.FC<ActionRollCardProps> = ({
 
   const handleRollDice = () => {
     if (isRolling || loading) return;
+
+    // Use full-screen 3D dice roll animation if handler is provided
+    if (onTriggerScreenRoll) {
+      setIsRolling(true);
+      onTriggerScreenRoll({
+        title: statOrSkillLabel,
+        subtitle: rollReq.reason,
+        dc: rollReq.dc,
+        modifier: calculatedModifier,
+        mode: rollMode,
+        onComplete: (res: any) => {
+          setIsRolling(false);
+          onPerformRoll(res.summaryText, {
+            d20: res.finalD20,
+            modifier: res.modifier,
+            total: res.total,
+            isCrit: res.isCrit,
+            isFumble: res.isFumble,
+            passed: res.passed,
+          });
+        },
+      });
+      return;
+    }
+
     setIsRolling(true);
     playDiceRollSound();
 

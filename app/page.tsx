@@ -59,6 +59,7 @@ import {
   isClassSpellcaster,
   CANTRIP_SUGGESTIONS_BY_CLASS,
   SPELL_SUGGESTIONS_BY_CLASS,
+  SKILL_RUSSIAN_NAMES,
 } from '@/lib/dndRules';
 import { parseAndAdvanceTime, formatInGameClock } from '@/lib/timeUtils';
 import { executeDirectDmTurn, isStandaloneMobile } from '@/lib/directAiClient';
@@ -126,6 +127,7 @@ import { JournalModal } from '@/components/JournalModal';
 import { CharacterCreatorModal } from '@/components/CharacterCreatorModal';
 import { LanMultiplayerModal } from '@/components/LanMultiplayerModal';
 import { SaveLoadModal } from '@/components/SaveLoadModal';
+import { ScreenDiceRoller, ScreenDiceRollOptions } from '@/components/ScreenDiceRoller';
 import { PartyRosterPanel } from '@/components/PartyRosterPanel';
 import {
   Shield,
@@ -223,6 +225,7 @@ export default function DnDApp() {
   const [isJournalOpen, setIsJournalOpen] = useState(false);
   const [isLanModalOpen, setIsLanModalOpen] = useState(false);
   const [isSaveLoadOpen, setIsSaveLoadOpen] = useState(false);
+  const [activeScreenRoll, setActiveScreenRoll] = useState<ScreenDiceRollOptions | null>(null);
 
   // LAN Multiplayer State
   const [isMultiplayerConnected, setIsMultiplayerConnected] = useState<boolean>(false);
@@ -1355,40 +1358,65 @@ export default function DnDApp() {
     await executeDmTurn(actionText, undefined, rollResultData);
   };
 
-  // Quick stat roll from Character Sheet
+  // Quick stat roll from Character Sheet with on-screen 3D animation
   const handleRollStat = (statKey: AbilityScoreKey, statName: string, modifier: number) => {
-    playDiceRollSound();
-    const d20 = Math.floor(Math.random() * 20) + 1;
-    const total = d20 + modifier;
-    const modStr = modifier >= 0 ? `+${modifier}` : `${modifier}`;
-    const isCrit = d20 === 20;
-    const isFumble = d20 === 1;
+    setActiveScreenRoll({
+      title: `Проверка характеристики: ${statName} (${statKey.toUpperCase()})`,
+      modifier,
+      mode: 'normal',
+      targetCharacterName: character?.name,
+      onComplete: (res) => {
+        const rollResultData: DiceRollResult = {
+          diceType: 'd20',
+          count: 1,
+          rolls: [res.finalD20],
+          modifier: res.modifier,
+          total: res.total,
+          isCrit: res.isCrit,
+          isFumble: res.isFumble,
+          statOrSkill: `Характеристика: ${statName}`,
+          characterName: character?.name || 'Герой',
+          characterId: localPlayerId,
+        };
 
-    if (isCrit) playCriticalHitSound();
-    else if (isFumble) playCriticalFailSound();
+        if (isMultiplayerConnected) {
+          lanSocket.submitRoll(rollResultData, { needed: false });
+        }
 
-    const text = `🎲 [Проверка характеристики: ${statName} (${statKey.toUpperCase()})]: Выпало d20 = ${d20} (${modStr}) = ИТОГО: ${total}${
-      isCrit ? ' 🌟 КРИТИЧЕСКИЙ УСПЕХ!' : isFumble ? ' 💀 КРИТИЧЕСКИЙ ПРОВАЛ!' : ''
-    }`;
-    handleSendAction(text);
+        handleSendAction(res.summaryText, rollResultData);
+      },
+    });
   };
 
-  // Quick skill roll from Character Sheet
+  // Quick skill roll from Character Sheet with on-screen 3D animation
   const handleRollSkill = (skillName: SkillName, modifier: number) => {
-    playDiceRollSound();
-    const d20 = Math.floor(Math.random() * 20) + 1;
-    const total = d20 + modifier;
-    const modStr = modifier >= 0 ? `+${modifier}` : `${modifier}`;
-    const isCrit = d20 === 20;
-    const isFumble = d20 === 1;
+    const ruSkill = SKILL_RUSSIAN_NAMES[skillName] || skillName;
+    setActiveScreenRoll({
+      title: `Проверка навыка: ${ruSkill}`,
+      modifier,
+      mode: 'normal',
+      targetCharacterName: character?.name,
+      onComplete: (res) => {
+        const rollResultData: DiceRollResult = {
+          diceType: 'd20',
+          count: 1,
+          rolls: [res.finalD20],
+          modifier: res.modifier,
+          total: res.total,
+          isCrit: res.isCrit,
+          isFumble: res.isFumble,
+          statOrSkill: `Навык: ${ruSkill}`,
+          characterName: character?.name || 'Герой',
+          characterId: localPlayerId,
+        };
 
-    if (isCrit) playCriticalHitSound();
-    else if (isFumble) playCriticalFailSound();
+        if (isMultiplayerConnected) {
+          lanSocket.submitRoll(rollResultData, { needed: false });
+        }
 
-    const text = `🎲 [Проверка навыка: ${skillName}]: Выпало d20 = ${d20} (${modStr}) = ИТОГО: ${total}${
-      isCrit ? ' 🌟 КРИТИЧЕСКИЙ УСПЕХ!' : isFumble ? ' 💀 КРИТИЧЕСКИЙ ПРОВАЛ!' : ''
-    }`;
-    handleSendAction(text);
+        handleSendAction(res.summaryText, rollResultData);
+      },
+    });
   };
 
   const handleRestAction = (restType: 'short' | 'long') => {
@@ -1791,6 +1819,7 @@ export default function DnDApp() {
                         character={character}
                         loading={loading}
                         onPerformRoll={handleRollSubmit}
+                        onTriggerScreenRoll={(opts) => setActiveScreenRoll(opts)}
                       />
                     );
                   }
@@ -1822,20 +1851,28 @@ export default function DnDApp() {
                       {isHost && (
                         <button
                           onClick={() => {
-                            const d20 = Math.floor(Math.random() * 20) + 1;
-                            const total = d20 + 2;
-                            handleRollSubmit(
-                              `🎲 [Хост бросил за ${pendingRoll.target_character_name}]: d20 (${d20}) + 2 = **${total}**${pendingRoll.dc ? ` (против DC ${pendingRoll.dc})` : ''}`,
-                              {
-                                d20,
-                                modifier: 2,
-                                total,
-                                isCrit: d20 === 20,
-                                isFumble: d20 === 1,
-                                passed: pendingRoll.dc ? total >= pendingRoll.dc : true,
-                                characterName: pendingRoll.target_character_name,
-                              }
-                            );
+                            setActiveScreenRoll({
+                              title: `Бросок за ${pendingRoll.target_character_name}`,
+                              subtitle: pendingRoll.reason,
+                              dc: pendingRoll.dc,
+                              modifier: 2,
+                              mode: 'normal',
+                              targetCharacterName: pendingRoll.target_character_name,
+                              onComplete: (res) => {
+                                handleRollSubmit(
+                                  `🎲 [Хост бросил за ${pendingRoll.target_character_name}]: d20 (${res.finalD20}) + 2 = **${res.total}**${pendingRoll.dc ? ` (против DC ${pendingRoll.dc})` : ''}`,
+                                  {
+                                    d20: res.finalD20,
+                                    modifier: 2,
+                                    total: res.total,
+                                    isCrit: res.isCrit,
+                                    isFumble: res.isFumble,
+                                    passed: res.passed,
+                                    characterName: pendingRoll.target_character_name,
+                                  }
+                                );
+                              },
+                            });
                           }}
                           className="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-amber-300 transition shrink-0 cursor-pointer"
                         >
@@ -2049,6 +2086,13 @@ export default function DnDApp() {
         isOpen={isDiceRollerOpen}
         onClose={() => setIsDiceRollerOpen(false)}
         onSendToChat={(rollSummary) => handleSendAction(rollSummary)}
+        onTriggerScreenRoll={(opts) => setActiveScreenRoll(opts)}
+      />
+
+      <ScreenDiceRoller
+        isOpen={Boolean(activeScreenRoll)}
+        options={activeScreenRoll}
+        onClose={() => setActiveScreenRoll(null)}
       />
 
       <SettingsModal

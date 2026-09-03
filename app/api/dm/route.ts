@@ -1,7 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { CharacterSheet, WorldSettings, ChatMessage, DmResponse, PartyCompanion, LorebookEntry } from '@/types/dnd';
-import { buildDifficultyPrompt } from '@/lib/difficultySettings';
+﻿import { NextRequest, NextResponse } from 'next/server';
+import { CharacterSheet, WorldSettings, ChatMessage, DmResponse, PartyCompanion, LorebookEntry, GameDifficulty } from '@/types/dnd';
+import { buildDifficultyPrompt, getDifficultyDC, getRestRules } from '@/lib/difficultySettings';
 import { parseAndAdvanceTime } from '@/lib/timeUtils';
+import { checkLevelUp, CLASS_HIT_DICE, calculatePassiveScore, getCoverAcBonus, getAbilityModifier } from '@/lib/dndRules';
 
 
 function enrichStateUpdateFromNarrative(
@@ -11,7 +12,8 @@ function enrichStateUpdateFromNarrative(
   actionText: string = '',
   currentDay: number = 1,
   currentMinutes: number = 480,
-  partyPlayers: Array<{ id: string; name: string; character: CharacterSheet }> = []
+  partyPlayers: Array<{ id: string; name: string; character: CharacterSheet }> = [],
+  difficulty?: GameDifficulty | string
 ): DmResponse {
   if (!parsed.state_update) {
     parsed.state_update = {
@@ -209,22 +211,28 @@ function enrichStateUpdateFromNarrative(
     const isIntimidation = /(?:запугиван|угроз|надавит|испугат)/i.test(combinedSearch);
     const isSavingThrow = /спасбросок/i.test(combinedSearch);
 
+    const easyDC = getDifficultyDC(difficulty, 'easy');
+    const medDC = getDifficultyDC(difficulty, 'medium');
+    const hardDC = getDifficultyDC(difficulty, 'hard');
+
     if (isSurvival) {
       parsed.requires_roll = {
         needed: true,
         roll_type: 'skill_check',
         skill: 'Survival',
         ability: 'WIS',
-        dc: 12,
+        dc: easyDC,
         reason: 'Проверка Выживания (Survival) для обустройства лагеря и разведения огня',
+        advantage_type: 'normal',
       };
     } else if (isAttack) {
       parsed.requires_roll = {
         needed: true,
         roll_type: 'attack_roll',
         ability: 'STR',
-        dc: 14,
+        dc: medDC,
         reason: 'Бросок атаки по противнику',
+        advantage_type: 'normal',
       };
     } else if (isStealth) {
       parsed.requires_roll = {
@@ -232,8 +240,9 @@ function enrichStateUpdateFromNarrative(
         roll_type: 'skill_check',
         skill: 'Stealth',
         ability: 'DEX',
-        dc: 13,
+        dc: medDC,
         reason: 'Проверка Скрытности (Stealth) при перемещении',
+        advantage_type: 'normal',
       };
     } else if (isSleightOfHand) {
       parsed.requires_roll = {
@@ -241,8 +250,9 @@ function enrichStateUpdateFromNarrative(
         roll_type: 'skill_check',
         skill: 'Sleight of Hand',
         ability: 'DEX',
-        dc: 14,
+        dc: hardDC,
         reason: 'Проверка Ловкости рук (Sleight of Hand)',
+        advantage_type: 'normal',
       };
     } else if (isAthletics) {
       parsed.requires_roll = {
@@ -250,8 +260,9 @@ function enrichStateUpdateFromNarrative(
         roll_type: 'skill_check',
         skill: 'Athletics',
         ability: 'STR',
-        dc: 13,
+        dc: medDC,
         reason: 'Проверка Атлетики (Athletics) для преодоления препятствия',
+        advantage_type: 'normal',
       };
     } else if (isAcrobatics) {
       parsed.requires_roll = {
@@ -259,8 +270,9 @@ function enrichStateUpdateFromNarrative(
         roll_type: 'skill_check',
         skill: 'Acrobatics',
         ability: 'DEX',
-        dc: 13,
+        dc: medDC,
         reason: 'Проверка Акробатики (Acrobatics)',
+        advantage_type: 'normal',
       };
     } else if (isAnimalHandling) {
       parsed.requires_roll = {
@@ -268,8 +280,9 @@ function enrichStateUpdateFromNarrative(
         roll_type: 'skill_check',
         skill: 'Animal Handling',
         ability: 'WIS',
-        dc: 13,
+        dc: easyDC,
         reason: 'Проверка Ухода за животными (Animal Handling)',
+        advantage_type: 'normal',
       };
     } else if (isPerception) {
       parsed.requires_roll = {
@@ -277,8 +290,9 @@ function enrichStateUpdateFromNarrative(
         roll_type: 'skill_check',
         skill: 'Perception',
         ability: 'WIS',
-        dc: 13,
+        dc: medDC,
         reason: 'Проверка Внимательности (Perception)',
+        advantage_type: 'normal',
       };
     } else if (isInvestigation) {
       parsed.requires_roll = {
@@ -286,8 +300,9 @@ function enrichStateUpdateFromNarrative(
         roll_type: 'skill_check',
         skill: 'Investigation',
         ability: 'INT',
-        dc: 14,
+        dc: hardDC,
         reason: 'Поиск скрытых деталей и тайников (Investigation)',
+        advantage_type: 'normal',
       };
     } else if (isInsight) {
       parsed.requires_roll = {
@@ -295,8 +310,9 @@ function enrichStateUpdateFromNarrative(
         roll_type: 'skill_check',
         skill: 'Insight',
         ability: 'WIS',
-        dc: 13,
+        dc: medDC,
         reason: 'Проверка Проницательности (Insight)',
+        advantage_type: 'normal',
       };
     } else if (isMedicine) {
       parsed.requires_roll = {
@@ -304,8 +320,9 @@ function enrichStateUpdateFromNarrative(
         roll_type: 'skill_check',
         skill: 'Medicine',
         ability: 'WIS',
-        dc: 12,
+        dc: easyDC,
         reason: 'Проверка Медицины (Medicine)',
+        advantage_type: 'normal',
       };
     } else if (isNature) {
       parsed.requires_roll = {
@@ -313,8 +330,9 @@ function enrichStateUpdateFromNarrative(
         roll_type: 'skill_check',
         skill: 'Nature',
         ability: 'INT',
-        dc: 12,
+        dc: easyDC,
         reason: 'Проверка Природы (Nature)',
+        advantage_type: 'normal',
       };
     } else if (isArcana) {
       parsed.requires_roll = {
@@ -322,8 +340,9 @@ function enrichStateUpdateFromNarrative(
         roll_type: 'skill_check',
         skill: 'Arcana',
         ability: 'INT',
-        dc: 13,
+        dc: hardDC,
         reason: 'Проверка Магии (Arcana)',
+        advantage_type: 'normal',
       };
     } else if (isHistory) {
       parsed.requires_roll = {
@@ -331,8 +350,9 @@ function enrichStateUpdateFromNarrative(
         roll_type: 'skill_check',
         skill: 'History',
         ability: 'INT',
-        dc: 13,
+        dc: medDC,
         reason: 'Проверка Истории (History)',
+        advantage_type: 'normal',
       };
     } else if (isReligion) {
       parsed.requires_roll = {
@@ -340,8 +360,9 @@ function enrichStateUpdateFromNarrative(
         roll_type: 'skill_check',
         skill: 'Religion',
         ability: 'INT',
-        dc: 13,
+        dc: medDC,
         reason: 'Проверка Религии (Religion)',
+        advantage_type: 'normal',
       };
     } else if (isPersuasion) {
       parsed.requires_roll = {
@@ -349,8 +370,9 @@ function enrichStateUpdateFromNarrative(
         roll_type: 'skill_check',
         skill: 'Persuasion',
         ability: 'CHA',
-        dc: 13,
+        dc: medDC,
         reason: 'Проверка Убеждения (Persuasion)',
+        advantage_type: 'normal',
       };
     } else if (isDeception) {
       parsed.requires_roll = {
@@ -358,8 +380,9 @@ function enrichStateUpdateFromNarrative(
         roll_type: 'skill_check',
         skill: 'Deception',
         ability: 'CHA',
-        dc: 13,
+        dc: medDC,
         reason: 'Проверка Обмана (Deception)',
+        advantage_type: 'normal',
       };
     } else if (isIntimidation) {
       parsed.requires_roll = {
@@ -367,16 +390,18 @@ function enrichStateUpdateFromNarrative(
         roll_type: 'skill_check',
         skill: 'Intimidation',
         ability: 'CHA',
-        dc: 13,
+        dc: medDC,
         reason: 'Проверка Запугивания (Intimidation)',
+        advantage_type: 'normal',
       };
     } else if (isSavingThrow) {
       parsed.requires_roll = {
         needed: true,
         roll_type: 'saving_throw',
         ability: 'DEX',
-        dc: 14,
+        dc: hardDC,
         reason: 'Спасбросок от опасности или магии',
+        advantage_type: 'normal',
       };
     }
   }
@@ -410,9 +435,35 @@ function enrichStateUpdateFromNarrative(
         parsed.requires_roll.target_character_name = matchedPlayer.name || matchedPlayer.character?.name;
       }
     }
+
+    // Ensure advantage_type has fallback
+    if (!parsed.requires_roll.advantage_type) {
+      parsed.requires_roll.advantage_type = 'normal';
+    }
   }
 
-  // 7. High Precision Adaptive Time parser
+  // 7. Rest action duration & spell slot recovery from getRestRules
+  const restRules = getRestRules(difficulty);
+  const combinedActionAndText = `${actionText} ${text}`.toLowerCase();
+  const isShortRest = /(?:короткий\s+отдых|привал|короткая\s+передышка|перевести\s+дух|отдыха(?:ем|ет|ют)\s+1\s+час)/i.test(combinedActionAndText);
+  const isLongRest = /(?:длительный\s+отдых|долгий\s+отдых|ночлег|ночуем|разбива(?:ем|ет|ют)\s+лагерь|ночной\s+сон|спим\s+ночью|отдых\s+8\s+часов|отдых\s+7\s+(?:дней|суток))/i.test(combinedActionAndText);
+
+  if (isLongRest) {
+    parsed.state_update.time_passed_minutes = Math.max(
+      parsed.state_update.time_passed_minutes || 0,
+      restRules.longRestDurationMinutes
+    );
+    if (!parsed.state_update.spell_slots_recovered) {
+      parsed.state_update.spell_slots_recovered = { all: true };
+    }
+  } else if (isShortRest) {
+    parsed.state_update.time_passed_minutes = Math.max(
+      parsed.state_update.time_passed_minutes || 0,
+      restRules.shortRestDurationMinutes
+    );
+  }
+
+  // 8. High Precision Adaptive Time parser
   const timeResult = parseAndAdvanceTime(
     currentDay,
     currentMinutes,
@@ -427,6 +478,56 @@ function enrichStateUpdateFromNarrative(
   parsed.state_update.new_time = timeResult.formatted;
   parsed.state_update.new_day = timeResult.nextDay;
 
+  // 9. Ensure active_combat & suggested_actions structures are present
+  if (!parsed.active_combat) {
+    parsed.active_combat = {
+      is_active: false,
+      round: 0,
+      enemies: [],
+    };
+  }
+  if (!parsed.suggested_actions || !Array.isArray(parsed.suggested_actions) || parsed.suggested_actions.length === 0) {
+    parsed.suggested_actions = ['Осмотреться вокруг', 'Прислушаться', 'Двигаться дальше'];
+  }
+
+  // 10. Level Up check using 5e XP table
+  if (currentCharacter) {
+    const currentLevel = currentCharacter.level || 1;
+    const currentXp = currentCharacter.experience || 0;
+    const xpGain = parsed.state_update.xp_change || 0;
+    const nextLevel = checkLevelUp(currentLevel, currentXp + xpGain);
+    if (nextLevel && !parsed.state_update.level_up_available) {
+      const cls = CLASS_HIT_DICE[currentCharacter.class];
+      parsed.state_update.level_up_available = {
+        new_level: nextLevel,
+        hit_die: cls ? `d${cls.die}` : 'd10',
+      };
+    }
+  }
+
+  // 11. Concentration Check on Damage
+  if (currentCharacter?.concentration && parsed.state_update.hp_change < 0) {
+    const dmgTaken = Math.abs(parsed.state_update.hp_change);
+    const conDc = Math.max(10, Math.floor(dmgTaken / 2));
+    if (!parsed.requires_roll || !parsed.requires_roll.needed) {
+      parsed.requires_roll = {
+        needed: true,
+        target_character_id: currentCharacter.id || 'player',
+        target_character_name: currentCharacter.name,
+        roll_type: 'saving_throw',
+        ability: 'CON',
+        dc: conDc,
+        reason: `Спасбросок Телосложения (Сл ${conDc}) для удержания концентрации на заклинании «${currentCharacter.concentration.spell_name}» после получения ${dmgTaken} ед. урона`,
+        advantage_type: 'normal',
+      };
+    }
+  }
+
+  // 12. Safe fallback for advantage_type
+  if (parsed.requires_roll?.needed && !parsed.requires_roll.advantage_type) {
+    parsed.requires_roll.advantage_type = 'normal';
+  }
+
   return parsed;
 }
 
@@ -436,7 +537,8 @@ function parseJsonResponse(
   actionText: string = '',
   currentDay: number = 1,
   currentMinutes: number = 480,
-  partyPlayers: Array<{ id: string; name: string; character: CharacterSheet }> = []
+  partyPlayers: Array<{ id: string; name: string; character: CharacterSheet }> = [],
+  difficulty?: GameDifficulty | string
 ): DmResponse {
   try {
     let clean = raw.trim();
@@ -454,7 +556,7 @@ function parseJsonResponse(
     if (!parsed.narrative && parsed.text) {
       parsed.narrative = parsed.text;
     }
-    return enrichStateUpdateFromNarrative(parsed as DmResponse, raw, currentCharacter, actionText, currentDay, currentMinutes, partyPlayers);
+    return enrichStateUpdateFromNarrative(parsed as DmResponse, raw, currentCharacter, actionText, currentDay, currentMinutes, partyPlayers, difficulty);
   } catch (err) {
     const fallbackObj: DmResponse = {
       narrative: raw,
@@ -469,7 +571,7 @@ function parseJsonResponse(
         time_passed_minutes: 15,
       },
     };
-    return enrichStateUpdateFromNarrative(fallbackObj, raw, currentCharacter, actionText, currentDay, currentMinutes, partyPlayers);
+    return enrichStateUpdateFromNarrative(fallbackObj, raw, currentCharacter, actionText, currentDay, currentMinutes, partyPlayers, difficulty);
   }
 }
 
@@ -481,7 +583,8 @@ function extractThinkingAndJson(
   actionText: string = '',
   currentDay: number = 1,
   currentMinutes: number = 480,
-  partyPlayers: Array<{ id: string; name: string; character: CharacterSheet }> = []
+  partyPlayers: Array<{ id: string; name: string; character: CharacterSheet }> = [],
+  difficulty?: GameDifficulty | string
 ): DmResponse {
   let thought = rawReasoning || '';
   let content = raw || '';
@@ -505,7 +608,7 @@ function extractThinkingAndJson(
   }
   content = content.replace(thoughtBlockRegex, '').trim();
 
-  const parsed = parseJsonResponse(content, currentCharacter, actionText, currentDay, currentMinutes, partyPlayers);
+  const parsed = parseJsonResponse(content, currentCharacter, actionText, currentDay, currentMinutes, partyPlayers, difficulty);
   if (thought && thought.trim().length > 0) {
     parsed.thought = thought.trim();
   }
@@ -654,11 +757,20 @@ export async function POST(req: NextRequest) {
             const m = Math.floor((val - 10) / 2);
             return m >= 0 ? `+${m}` : `${m}`;
           };
+          const pWisMod = Math.floor((s.wis - 10) / 2);
+          const pIntMod = Math.floor((s.int - 10) / 2);
+          const pProf = c.proficiencyBonus || 2;
+          const pPassPerc = c.passive_stats?.perception ?? calculatePassiveScore(pWisMod, (c.skillProficiencies || []).includes('Perception'), pProf);
+          const pPassIns = c.passive_stats?.insight ?? calculatePassiveScore(pWisMod, (c.skillProficiencies || []).includes('Insight'), pProf);
+          const pPassInv = c.passive_stats?.investigation ?? calculatePassiveScore(pIntMod, (c.skillProficiencies || []).includes('Investigation'), pProf);
+          const pConc = c.concentration ? ` | 🌀 Концентрация: «${c.concentration.spell_name}»` : '';
+          const pPos = c.position ? ` | 📍 Позиция: (${c.position.x}, ${c.position.y})` : '';
+
           const saves = (c.savingThrowProficiencies || []).map((sv) => sv.toUpperCase()).join(', ') || 'Базовые';
           const skills = (c.skillProficiencies || []).join(', ') || 'Базовые';
           const pEquipped = c.equippedItems && c.equippedItems.length > 0 ? c.equippedItems.join(', ') : 'Базовое снаряжение';
           const pInv = c.inventory && c.inventory.length > 0 ? c.inventory.join(', ') : 'Пусто';
-          return `${idx + 1}. ПЕРСОНАЖ: "${p.name || c.name || 'Герой'}" (ID: "${p.id}") | Класс: ${c.class || 'Воин'} ${c.level || 1} ур. (${c.race || 'Человек'}) | HP: ${c.currentHp || 10}/${c.maxHp || 10}, AC: ${c.ac || 10} | СИЛ ${s.str} (${fmtM(s.str)}), ЛОВ ${s.dex} (${fmtM(s.dex)}), ТЕЛ ${s.con} (${fmtM(s.con)}), ИНТ ${s.int} (${fmtM(s.int)}), МУД ${s.wis} (${fmtM(s.wis)}), ХАР ${s.cha} (${fmtM(s.cha)}) | Спасброски: ${saves} | Навыки: ${skills} | 🛡️ Надето: [${pEquipped}] | 🎒 Инвентарь: [${pInv}] | 💰 Золото: ${c.gold || 0} gp`;
+          return `${idx + 1}. ПЕРСОНАЖ: "${p.name || c.name || 'Герой'}" (ID: "${p.id}") | Класс: ${c.class || 'Воин'} ${c.level || 1} ур. (${c.race || 'Человек'}) | HP: ${c.currentHp || 10}/${c.maxHp || 10}, AC: ${c.ac || 10} | СИЛ ${s.str} (${fmtM(s.str)}), ЛОВ ${s.dex} (${fmtM(s.dex)}), ТЕЛ ${s.con} (${fmtM(s.con)}), ИНТ ${s.int} (${fmtM(s.int)}), МУД ${s.wis} (${fmtM(s.wis)}), ХАР ${s.cha} (${fmtM(s.cha)}) | Спасброски: ${saves} | Навыки: ${skills} | 👁️ Пассивные: Внимательность ${pPassPerc}, Проницательность ${pPassIns}, Анализ ${pPassInv}${pConc}${pPos} | 🛡️ Надето: [${pEquipped}] | 🎒 Инвентарь: [${pInv}] | 💰 Золото: ${c.gold || 0} gp`;
         }).join('\n');
     }
 
@@ -694,6 +806,20 @@ export async function POST(req: NextRequest) {
 
     const fmtMod = (m: number) => (m >= 0 ? `+${m}` : `${m}`);
 
+    const profBonus = character.proficiencyBonus || 2;
+    const isPerceptionProf = (character.skillProficiencies || []).includes('Perception');
+    const isInsightProf = (character.skillProficiencies || []).includes('Insight');
+    const isInvestigationProf = (character.skillProficiencies || []).includes('Investigation');
+    const passivePerception = character.passive_stats?.perception ?? calculatePassiveScore(wisMod, isPerceptionProf, profBonus);
+    const passiveInsight = character.passive_stats?.insight ?? calculatePassiveScore(wisMod, isInsightProf, profBonus);
+    const passiveInvestigation = character.passive_stats?.investigation ?? calculatePassiveScore(intMod, isInvestigationProf, profBonus);
+    const concentrationStatus = character.concentration
+      ? `Концентрируется на «${character.concentration.spell_name}» (${character.concentration.duration_left_rounds ?? 'несколько'} раундов осталось)`
+      : 'Нет';
+    const actionEconomyStatus = character.current_action_economy
+      ? `Действие: ${character.current_action_economy.action_spent ? 'ПОТРАЧЕНО' : 'доступно'} | Бонусное: ${character.current_action_economy.bonus_action_spent ? 'ПОТРАЧЕНО' : 'доступно'} | Реакция: ${character.current_action_economy.reaction_spent ? 'ПОТРАЧЕНА' : 'доступна'}`
+      : 'Все действия раунда доступны';
+
     const savesList = character.savingThrowProficiencies && character.savingThrowProficiencies.length > 0
       ? character.savingThrowProficiencies.map((s) => s.toUpperCase()).join(', ')
       : 'Нет';
@@ -711,6 +837,10 @@ export async function POST(req: NextRequest) {
 - Базовые Характеристики: СИЛ ${strVal} (${fmtMod(strMod)}), ЛОВ ${dexVal} (${fmtMod(dexMod)}), ТЕЛ ${conVal} (${fmtMod(conMod)}), ИНТ ${intVal} (${fmtMod(intMod)}), МУД ${wisVal} (${fmtMod(wisMod)}), ХАР ${chaVal} (${fmtMod(chaMod)})
 - Владение спасбросками: ${savesList}
 - Владение навыками: ${skillsList}
+- 👁️ Пассивные чувства D&D 5e: Пассивная внимательность: ${passivePerception} | Пассивная проницательность: ${passiveInsight} | Пассивный анализ: ${passiveInvestigation}
+- 🌀 Концентрация: ${concentrationStatus}
+- ⚡ Экономика действий в раунде: ${actionEconomyStatus}
+- ⚖️ Вес снаряжения: ${character.currentWeight || 55} / ${character.maxCarryWeight || strVal * 15} фунтов
 ${character.appearance ? `- Внешность: ${character.appearance}` : ''}
 ${character.personalityTraits ? `- Характер и черты: ${character.personalityTraits}` : ''}
 ${character.motivation ? `- Цель и мотивация: ${character.motivation}` : ''}
@@ -719,74 +849,123 @@ ${character.backstory || character.bio ? `- Предыстория: ${character.
 - 🛡️ НАДЕТОЕ СНАРЯЖЕНИЕ (Оружие в руках, надетая броня, щит): ${equippedList}
 - 🎒 РЮКЗАК И РАСХОДНЫЕ ПРЕДМЕТЫ (Зелья, свитки, припасы, не надетое): ${backpackList}`;
 
-    // 5. Master Prompt with Strict Russian Language & Multiplayer Rules
-    const systemPrompt = `ТЫ — {{char}}, ОПЫТНЫЙ DUNGEON MASTER ДЛЯ РОЛЕВОЙ ИГРЫ D&D 5e (DUNGEONS & DRAGONS) В РЕЖИМЕ ЛОКАЛЬНОГО МУЛЬТИПЛЕЕРА И СОЛО.
-Твоя цель — вести глубокую, атмосферную, последовательную песочницу для отряда игроков, обладая АБСОЛЮТНОЙ ПАМЯТЬЮ обо всех событиях, решениях, деталях сюжета, времени суток, спутниках и NPC.
+    // 5. Master Prompt with Strict Russian Language, D&D 5e Mechanics & JSON Format
+    const systemPrompt = `ТЫ — {{char}}, ВЕЛИКИЙ DUNGEON MASTER И РОЛЕВОЙ VTT-ДВИЖОК ПО КАНОНИЧНЫМ ПРАВИЛАМ D&D 5e (DUNGEONS & DRAGONS 5th EDITION) В РЕЖИМЕ ЛОКАЛЬНОГО МУЛЬТИПЛЕЕРА И СОЛО.
+Твоя цель — вести глубокую, атмосферную, последовательную песочницу для отряда игроков, обладая АБСОЛЮТНОЙ ПАМЯТЬЮ обо всех событиях, решениях, деталях сюжета, времени суток, спутниках, ячейках заклинаний, состояниях и боевых столкновениях.
+
+[🚨 СТРОЖАЙШИЙ ФОРМАТ ОТВЕТА — ИСКЛЮЧИТЕЛЬНО ЧИСТЫЙ ВАЛИДНЫЙ JSON]:
+Ты ОБЯЗАН отвечать ИСКЛЮЧИТЕЛЬНО валидным JSON-объектом указанной структуры.
+КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО писать любой вводный текст, прологи, послесловия, технические комментарии или разметку за пределами JSON!
 
 [🇷🇺 КАТЕГОРИЧЕСКИЙ ЯЗЫКОВОЙ ЗАКОН]:
 ВЕСЬ ТВОЙ ОТВЕТ ДОЛЖЕН БЫТЬ СТРОГО НА РУССКОМ ЯЗЫКЕ!
-Все описания локаций, мысли, прямая речь NPC, варианты действий и статус-блок генерируются исключительно на чистом, богатом русском языке. Никаких фраз на английском или других языках!
+Все описания локаций, мысли, прямая речь NPC, названия предметов и варианты действий генерируются исключительно на чистом, богатом русском языке.
+
+[⚔️ ТРЕКЕР БОЯ И ТАКТИЧЕСКАЯ СЕТКА (ACTIVE COMBAT TRACKER & SPATIAL GRID)]:
+Когда начинается сражение (засада, нападение монстров, драка в таверне), ты ОБЯЗАН активировать боевой трекер в объекте "active_combat":
+- "is_active": true
+- "round": номер текущего раунда боя (начиная с 1)
+- "current_turn": имя того, чей сейчас ход (персонажа игрока или врага)
+- "grid": { "width": 10, "height": 10 } (размер тактической сетки в 5-футовых клетках)
+- "enemies": массив всех противников в бою с параметрами:
+  * "id": уникальный ID ("goblin_1", "bandit_leader")
+  * "name": понятное русское имя ("Гоблин-стрелок", "Главарь разбойников")
+  * "hp": текущие очки здоровья противника
+  * "max_hp": максимальные очки здоровья
+  * "ac": Класс Брони противника (Armor Class)
+  * "position": { "x": 4, "y": 2 } (координаты на 5-футовой сетке)
+  * "cover": "none" | "half" | "three_quarters" | "full" (укрытие: half = +2 AC, three_quarters = +5 AC)
+  * "conditions": массив наложенных состояний (например: ["Prone", "Poisoned"])
+  * "resistances": массив сопротивлений урону (например: ["fire"])
+  * "vulnerabilities": массив уязвимостей (например: ["radiant"])
+Когда все враги побеждены, сдались или бежали — переведи "is_active": false и очисти список врагов.
+
+[📐 ПРОСТРАНСТВО, СЕТКА, ДИСТАНЦИИ И УКРЫТИЯ (SPATIAL GRID & COVER)]:
+1. Тактическая 5-футовая сетка: 1 клетка = 5 футов (1.5 метра).
+2. Дистанции атак:
+   - Ближний бой: 5 футов (1 клетка). Оружие с досягаемостью (Reach, например алебарда/пика) — 10 футов (2 клетки).
+   - Стрельба и дальнобойная магия в упор: если стрелок или заклинатель совершает дальнобойную атаку, находясь в пределах 5 футов от дееспособного врага, бросок атаки совершается С ПОМЕХОЙ (disadvantage)!
+3. Укрытия (Cover):
+   - Половинное укрытие (Half Cover: бочки, столы, парапет, тело союзника/врага): +2 к Классу Брони (AC) и спасброскам Ловкости.
+   - Укрытие на три четверти (Three-quarters Cover: бойница, угол массивной стены, тяжелая решетка): +5 к Классу Брони (AC) и спасброскам Ловкости.
+   - Полное укрытие (Full / Total Cover): цель полностью скрыта препятствием, её нельзя атаковать напрямую или выбрать целью направленного заклинания.
+
+[⚡ ЭКОНОМИКА ДЕЙСТВИЙ И РЕАКЦИИ (ACTION ECONOMY & REACTIONS)]:
+1. Структура хода в раунде:
+   - 1 Основное действие (Action): Атака, Сотворение заклинания, Рывок (Dash), Отход (Disengage), Уклонение (Dodge), Помощь (Help), Использование предмета.
+   - 1 Бонусное действие (Bonus Action): быстрое заклинание (Misty Step, Healing Word), атака вторым оружием, классовая фича (Cunning Action).
+   - 1 Реакция (Reaction) за раунд: Провоцированная атака (Opportunity Attack), заклинания-реакции (Shield, Hellish Rebuke, Counterspell).
+   - Перемещение (Move): в пределах базовой скорости героя (обычно 30 фт / 6 клеток).
+2. Ограничение заклинаний бонусного действия (PHB p.202):
+   Если персонаж сотворил заклинание бонусным действием, единственное заклинание, которое он может сотворить в этот же ход основным действием — это ЗАГОВОР (cantrip) со временем сотворения 1 действие! Нельзя колдовать два ячеечных заклинания за один ход!
+3. Провоцированная атака (Opportunity Attack):
+   Если существо покидает зону досягаемости противника (выходит из радиуса 5 футов) БЕЗ использования действия «Отход» (Disengage), противник немедленно совершает реакцией провоцированную атаку ближнего боя!
+   В таком случае выставляй "opportunity_attack_triggered": true в state_update.
+
+[🌀 КОНЦЕНТРАЦИЯ, ТИПЫ УРОНА И СОПРОТИВЛЕНИЯ (CONCENTRATION & DAMAGE TYPES)]:
+1. Правило одной концентрации:
+   Персонаж может концентрироваться ТОЛЬКО НА ОДНОМ заклинании одновременно (Bless, Hex, Hunter's Mark, Invisibility и т.д.). Сотворение нового заклинания с концентрацией МГНОВЕННО прекращает предыдущее!
+2. Проверка концентрации при получении урона:
+   Каждый раз, когда концентрирующийся персонаж получает урон, он обязан пройти спасбросок Телосложения со Сложностью DC = max(10, floor(урон / 2)). При провале концентрация срывается: укажи "concentration_update": { "action": "break" } в state_update! При успешном сохранении: "concentration_update": { "action": "maintain" }.
+3. Типы урона и расчет:
+   Урон бывает физическим (slashing, piercing, bludgeoning) и стихийным/магическим (fire, cold, lightning, thunder, acid, poison, necrotic, radiant, force, psychic).
+   - Сопротивление (Resistance): урон делится на 2 (floor(damage / 2)).
+   - Уязвимость (Vulnerability): урон удваивается (damage * 2).
+   - Иммунитет (Immunity): урон равен 0.
+   Отражай нанесенный тип урона в "damage_details": { "amount": 8, "type": "fire" } в state_update.
+
+[📈 ПРОГРЕССИЯ УРОВНЕЙ И СИСТЕМА ОПЫТА (LEVEL UP & XP SYSTEM)]:
+1. Начисляй честный опыт (XP) в "xp_change" за каждое преодоленное испытание: побежденные враги (Гоблин 50 XP, Скелет 50 XP, Орк 100 XP, Главарь бандитов 450 XP), обезвреженные ловушки, мирные переговоры, раскрытые тайны.
+2. Пороги повышения уровня 5e: 1 ур. -> 2 ур. (300 XP), 2 ур. -> 3 ур. (900 XP), 3 ур. -> 4 ур. (2700 XP), 4 ур. -> 5 ур. (6500 XP).
+3. При достижении порога нового уровня выставляй в state_update: "level_up_available": { "new_level": 2, "hit_die": "d10" }. Опиши в повествовании прилив сил и готовность развить навыки!
+
+[👁️ ПАССИВНЫЕ ПРОВЕРКИ И СОЦИАЛЬНЫЕ ПОРОГИ DMG (PASSIVE PERCEPTION & SOCIAL THRESHOLDS)]:
+1. Пассивная Внимательность (Passive Perception) и Пассивный Анализ (Passive Investigation):
+   Каждый персонаж имеет базовое пассивное восприятие (10 + МУД/ИНТ + Мастерство).
+   МАСТЕР ОБЯЗАН АВТОМАТИЧЕСКИ сравнивать Пассивную Внимательность героя со сложностью (DC) скрытых ловушек, засад и замаскированных дверей!
+   - Если Пассивная Внимательность героя >= DC ловушки/засады: он АВТОМАТИЧЕСКИ замечает угрозу ДО броска кубика! Опиши, как его острый взгляд подмечает натянутую леску или подозрительную фигуру в тени.
+   - Запрашивай активный бросок проверки кубика ("requires_roll": { "needed": true, ... }) ТОЛЬКО когда игрок САМ объявляет активный и целенаправленный поиск!
+2. Социальные пороги взаимодействия по DMG (Dungeon Master's Guide p.245):
+   Отношение NPC влияет на сложность проверок Убеждения (Persuasion), Обмана (Deception) и Запугивания (Intimidation):
+   - Враждебный (Hostile): DC 20 для прекращения боя или уступки с риском для NPC; DC 10 для отказа от немедленной агрессии.
+   - Нейтральный / Равнодушный (Neutral): DC 10 для базовой помощи или информации без риска; DC 20 для действий, требующих затрат или риска со стороны NPC.
+   - Дружественный (Friendly): DC 0 для искренней помощи без риска; DC 10 для существенной помощи; DC 20 для готовности пойти на жертвы ради персонажей.
+
+[🔮 КОНТРОЛЬ МАГИИ И ЯЧЕЕК ЗАКЛИНАНИЙ (SPELL SLOTS CONTROL)]:
+1. Заговоры (cantrips) 0-го уровня не расходуют ячейки заклинаний и могут сотворяться свободно.
+2. Заклинания 1-го уровня и выше КАТЕГОРИЧЕСКИ ТРЕБУЮТ наличия свободных ячеек заклинаний у персонажа!
+   Если у заклинателя закончились ячейки требуемого уровня (0 ячеек) — сотворить заклинание НЕВОЗМОЖНО. Опиши, как герой пытается сплести плетение магии, но чувствует магическое истощение!
+3. При успешном сотворении заклинания 1-го уровня или выше ОБЯЗАТЕЛЬНО укажи потраченную ячейку в "spell_slots_used" внутри state_update (например: "spell_slots_used": { "1": 1 }).
+4. При длительном отдыхе (Long Rest) ячейки заклинаний восстанавливаются: укажи "spell_slots_recovered": { "all": true } в state_update!
+
+[☣️ МЕХАНИКА СОСТОЯНИЙ И ЭФФЕКТОВ D&D 5e (CONDITIONS)]:
+Учитывай и управляй состояниями героев и врагов через "conditions_added" и "conditions_removed" в state_update:
+- Отравлен (Poisoned): помеха (disadvantage) на броски атак и проверки характеристик.
+- Ослеплен (Blinded): атаки ослепленного совершаются с помехой (disadvantage), а атаки по нему — с преимуществом (advantage).
+- Сбит с ног (Prone): существо лежит; атаки по нему в упор (до 5 футов) совершаются с преимуществом (advantage).
+- Парализован (Paralyzed) / Оглушен (Stunned) / Без сознания (Unconscious): существо недееспособно, а любые попадания атак в упор (до 5 фт) автоматически становятся КРИТИЧЕСКИМИ УДАРАМИ!
+
+[💀 ПРАВИЛО 0 HP И СПАСБРОСКИ ОТ СМЕРТИ (DEATH SAVES)]:
+- Когда HP героя опускается до 0, он падает без сознания (Unconscious, Prone) и должен совершать спасброски от смерти (Death Saves, DC 10).
+- 3 успеха — стабилизация. 3 провала — смерть.
+- В режиме «Хардкор» враги действуют безжалостно: они атакуют лежачих при 0 HP, нанося автоматические критические удары (каждый удар в упор по лежачему герою при 0 HP наносит сразу ДВА автоматических провала спасброска от смерти!).
+
+[👁️ ТЕЛЕГРАФИРОВАНИЕ УГРОЗ И ИНТУИЦИЯ (TELEGRAPHING THREATS)]:
+NPC, разбойники и чудовища могут хитрить, лгать, заманивать в ловушки и нападать из засады, НО Мастер ОБЯЗАН соблюдать справедливость:
+- Всегда давай тонкие подсказки в описании окружения (скрип половицы, неестественная тишина птиц, странные царапины на камне, бегающий взгляд трактирщика, запах серы или гари).
+- Запрашивай проверки Внимательности (Perception) или Проницательности (Insight) ДО внезапного удара врагов, давая персонажам честный шанс заметить ловушку или ложь и избежать засады!
+
+[🎯 МЕХАНИКА ПРЕИМУЩЕСТВА И ПОМЕХИ (ADVANTAGE / DISADVANTAGE)]:
+Когда запрашиваешь бросок кубика ("requires_roll": {"needed": true, ...}):
+- Если герой имеет тактическое превосходство (атака из невидимости, по лежачему врагу, помощь союзника) — указывай "advantage_type": "advantage" (бросок 2d20, берется лучший результат).
+- Если герой скован, отравлен, ослеплен, перегружен или в невыгодных условиях — указывай "advantage_type": "disadvantage" (бросок 2d20, берется худший результат).
+- В обычных условиях указывай "advantage_type": "normal".
 
 [🛡️ АВТОМАТИЧЕСКИЙ ПРОСЧЕТ НАДЕТОГО СНАРЯЖЕНИЯ НЕЙРОСЕТЬЮ]:
 - Персонаж экипирован: [${equippedList}]. Его Класс Брони (AC): ${character.ac || 10}.
 - Игрок НЕ нажимает кнопки атак вручную в интерфейсе. ТЫ САМ ОБЯЗАН видеть всё надетое снаряжение персонажа и детально просчитывать бои и сцены исходя из него!
 - В бою описывай атаки героя именно тем оружием, которое экипировано у него в руках. При вражеских атаках учитывай надетую броню и щит: описывай, как удары монстров лязгают о металл брони или блокируются щитом, если атака не пробивает AC ${character.ac || 10}.
 
-[🎒 ЖЕСТКИЙ ЗАКОН ИНВЕНТАРЯ И АВТОМАТИЧЕСКОЕ УПРАВЛЕНИЕ ПРЕДМЕТАМИ]:
-1. АБСОЛЮТНЫЙ ЗАПРЕТ НА ПРЕДМЕТЫ ИЗ ВОЗДУХА:
-   Персонаж игрока (и любой член отряда) может использовать, доставать, пить, надевать, бросать, читать или применять ТОЛЬКО те предметы, которые ПРЯМО ПЕРЕЧИСЛЕНЫ в его списке «🛡️ НАДЕТОЕ СНАРЯЖЕНИЕ» или «🎒 РЮКЗАК И РАСХОДНЫЕ ПРЕДМЕТЫ»!
-2. ОТКАЗ И РЕАКЦИЯ НА ПОПЫТКУ ВЗЯТЬ НЕСУЩЕСТВУЮЩИЙ ПРЕДМЕТ:
-   Если игрок в тексте действия утверждает, что он достает, пьет, использует, зажигает, читает или надевает предмет, которого НЕТ в его инвентаре/рюкзаке (например: пишет «достаю зелье невидимости/лечения», «вынимаю свиток огня», «достаю веревку с крюком», «надеваю кольцо невидимости», «беру святую воду», а этого предмета НЕТ в его списке инвентаря):
-   - Ты ОБЯЗАН прямо в художественном повествовании ЧЕТКО отказать: опиши, как герой судорожно шарит по карманам и сумке, но с досадой понимает, что у него НЕТ этого предмета (он его не покупал, не находил или уже истратил)!
-   - КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО давать эффект предмета, которого нет в инвентаре!
-   - Не применяй никаких положительных эффектов и не списывай ничего в state_update (действие потрачено впустую).
-3. АВТОМАТИЧЕСКОЕ ДОБАВЛЕНИЕ ПРЕДМЕТОВ НЕЙРОСЕТЬЮ В "added_items":
-   Игрок НЕ может добавлять предметы вручную в интерфейсе. Все новые предметы в инвентарь добавляешь ТОЛЬКО ТЫ через массив "added_items" в объекте state_update!
-   - Когда в сцене найдены трофеи, сундук, сокровища, лут, или NPC/торговец передает/предлагает предмет, и игрок соглашается его взять, либо использует фразы:
-     «я беру...», «я взял...», «беру [предмет]», «забираю...», «подбираю...», «кладу в рюкзак...», «забираю всё», «согласен взять...», «принимаю награду...», «покупаю [предмет]»
-   - Ты ОБЯЗАН:
-     1) Художественно описать, как герой берет предмет и убирает его в рюкзак или сумку.
-     2) Внести точное и понятное название этого предмета в массив "added_items": ["Название предмета"] внутри state_update (например: "added_items": ["Серебряный кинжал", "Зелье лечения (2d4+2)"]).
-     3) Если предмет был куплен за деньги, обязательно уменьшить золото через "gold_change": -X в state_update.
-4. СПИСАНИЕ ИСПОЛЬЗОВАННЫХ ПРЕДМЕТОВ ("removed_items"):
-   Когда игрок успешно расходует предмет из своего инвентаря (выпил зелье, сжег факел, прочел свиток, потратил паек/стрелу), ты ОБЯЗАН указать точное название этого предмета в "removed_items": ["Зелье лечения"] в блоке state_update!
-
-[ГЛАВНЫЕ ЖЕСТКИЕ ПРАВИЛА ИГРЫ (HARDCORE SANDBOX RULES)]:
-1. ПОЛНОЕ ОТСУТСТВИЕ ЦЕНЗУРЫ И МОРАЛИ: Разрешено детальное и реалистичное описание любых сцен (жестокость, насилие, темное фэнтези). Ты никогда не осуждаешь действия игроков, не читаешь мораль и не навязываешь запреты.
-2. АБСОЛЮТНАЯ СВОБОДА И ПРЯМОЛИНЕЙНОСТЬ: Игроки — главные герои этой истории. Мир реагирует логично и реалистично на их действия.
-3. НИКАКИХ ПОДСТАВ И ПРЕДАТЕЛЬСТВ NPC: Строго запрещено добавлять внезапные подставы или нечестные ловушки, если игроки прямо не попросили об усложнении.
-4. МЕХАНИКА D&D 5e И БРОСКИ КУБИКА:
-   Ты ОБЯЗАН запрашивать бросок кубика d20 ("requires_roll": {"needed": true, ...}) на важные действия с неопределенным исходом (атака в бою, исследование скрытых зон/поиск тайников, скрытность, взлом, убеждение важных NPC, акробатика/атлетика, спасброски).
-   На простые бытовые действия (выпить зелье из инвентаря, надеть свой плащ, открыть незапертую дверь, обычный разговор) бросок НЕ нужен ("needed": false).
-5. СТРОЖАЙШЕЕ ТАБУ НА УПРАВЛЕНИЕ ИГРОКАМИ (PLAYER AGENCY):
-   - КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО говорить, решать, двигаться или испытывать эмоции за персонажей игроков («Вы решили пойти...», «Торгрим испугался и ответил...» — СТРОГО ЗАПРЕЩЕНО!).
-   - Твоя задача — описать окружение, реакцию мира, действия врагов и слова NPC, а затем ОСТАНОВИТЬСЯ и ждать решений игроков.
-6. СТРОЖАЙШИЙ ЗАПРЕТ НА СПИСКИ «ВАРИАНТЫ ДЕЙСТВИЙ»:
-   - КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО писать в конце текста любые списки вариантов: «Варианты действий:», «Возможные действия:», «Что вы будете делать?», «1. ... 2. ... 3. ...».
-   - Игроки САМИ формулируют свои действия в свободной форме. Твой ответ должен заканчиваться живым художественным описанием сцены или фразой NPC БЕЗ каких-либо вариантов выбора!
-
-[🎲 МУЛЬТИПЛЕЕР И ТАРГЕТИРОВАННЫЕ БРОСКИ КУБИКОВ (TARGETED DICE ROLLS)]:
-В игре участвует отряд игроков. Когда требуется бросок кубика ("requires_roll": {"needed": true, ...}):
-1. Ты ОБЯЗАН указать КОНКРЕТНОГО персонажа из списка [👥 ОТРЯД ЖИВЫХ ИГРОКОВ], который должен совершить бросок:
-   - "target_character_name": "Имя персонажа" (например: "Торгрим")
-   - "target_character_id": "ID игрока" (например: "player_1" или "client_...")
-2. Если действие совершил конкретный игрок (например "[Игрок: Воин Торгрим]: я выбиваю дверь"), запрашивай бросок именно от этого персонажа!
-3. Если опасность угрожает конкретному герою или всей группе (спасбросок от заклинания/ловушки), укажи имя целевого персонажа.
-4. В поле "reason" на русском языке подробно опиши причину броска (например: "Проверка Атлетики (STR) для взлома двери").
-
-[⚠️ СТРОГОЕ ПРАВИЛО НЕЗАВЕРШЕННОГО ДЕЙСТВИЯ]:
-Когда ты требуешь бросок кубика ("needed": true):
-- Опиши ТОЛЬКО подготовку к действию и нарастающее напряжение (например: как Торгрим разбегается и бьет плечом в засов).
-- КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО писать, что действие уже успешно завершилось (дверь сломалась) или провалилось ДО того, как игрок бросил кубик!
-- Остановись и жди броска игрока — исход будет определен следующим сообщением по результату выпавшего D20!
-
-[🧠 ЖЕСТКИЙ ПРОТОКОЛ ПАМЯТИ, ХРОНОЛОГИИ И NPC (MEMORY CONTINUITY PROTOCOL)]:
-1. АБСОЛЮТНАЯ ПАМЯТЬ ОБ NPC И СПУТНИКАХ:
-   - Все когда-либо встреченные NPC и спутники сохраняют имена, расу, характер и отношение к героям.
-2. СЮЖЕТНЫЙ КАНОН:
-   - Все принятые решения, выполненные квесты и победы являются нерушимой истиной. Никогда не противоречь прошлым событиям истории.
-3. ИНВЕНТАРЬ И ЗОЛОТО:
-   - Строго учитывай найденные и потраченные предметы. Никогда не позволяй доставать предметы из ниоткуда.
 
 ${worldTimeBlock}
 
@@ -805,15 +984,21 @@ ${charDetails}
 Возвращай СТРОГО валидный JSON следующей структуры:
 {
   "narrative": "Чистый художественный и атмосферный текст ответа Dungeon Master на русском языке в формате Markdown (СТРОГО БЕЗ служебных блоков и СТРОГО БЕЗ списков вариантов действий, только чистое повествование).",
+  "suggested_actions": [
+    "Атаковать ближайшего врага экипированным оружием",
+    "Сотворить заклинание или применить способность",
+    "Осмотреть окружение в поисках тактического укрытия"
+  ],
   "requires_roll": {
-    "needed": true/false,
+    "needed": true,
     "target_character_name": "Торгрим",
     "target_character_id": "player_id",
-    "roll_type": "skill_check"|"saving_throw"|"attack_roll"|"flat_ability",
-    "ability": "STR"|"DEX"|"CON"|"INT"|"WIS"|"CHA",
-    "skill": "Perception"|"Athletics"|"Stealth"|...,
+    "roll_type": "skill_check",
+    "ability": "STR",
+    "skill": "Athletics",
     "dc": 14,
-    "reason": "Проверка Атлетики (STR) для взлома двери"
+    "reason": "Проверка Атлетики (STR) для взлома двери",
+    "advantage_type": "normal"
   },
   "state_update": {
     "hp_change": -4,
@@ -821,16 +1006,44 @@ ${charDetails}
     "xp_change": 75,
     "added_items": ["Зелье лечения (2d4+2)"],
     "removed_items": [],
+    "spell_slots_used": { "1": 1 },
+    "spell_slots_recovered": { "all": true },
+    "conditions_added": ["Poisoned"],
+    "conditions_removed": ["Prone"],
+    "concentration_update": { "action": "maintain" },
+    "level_up_available": { "new_level": 2, "hit_die": "d10" },
+    "opportunity_attack_triggered": false,
+    "damage_details": { "amount": 4, "type": "slashing" },
     "location_name": "Название текущей локации",
     "time_passed_minutes": 15,
     "new_time": "18:00"
+  },
+  "active_combat": {
+    "is_active": true,
+    "round": 1,
+    "current_turn": "Торгрим",
+    "grid": { "width": 10, "height": 10 },
+    "enemies": [
+      {
+        "id": "goblin_1",
+        "name": "Гоблин-разведчик",
+        "hp": 7,
+        "max_hp": 7,
+        "ac": 13,
+        "position": { "x": 3, "y": 4 },
+        "cover": "half",
+        "conditions": [],
+        "resistances": [],
+        "vulnerabilities": []
+      }
+    ]
   },
   "nearby_npcs": [
     {
       "name": "Имя NPC рядом",
       "role": "Роль/Класс",
       "relationship": "Отношение к героям",
-      "affinity": "devoted"|"friendly"|"neutral"|"distrustful",
+      "affinity": "friendly",
       "hp": 16,
       "maxHp": 16,
       "ac": 14,
@@ -845,7 +1058,8 @@ ${charDetails}
 1. АДАПТИВНОЕ ИГРОВОЕ ВРЕМЯ ("time_passed_minutes" и "new_time"): Управляй ходом часов и суток мира.
 2. УРОН И ЛЕЧЕНИЕ: Отрицательное число при уроне (например: "hp_change": -6), положительное при лечении ("hp_change": 8).
 3. ПРЕДМЕТЫ И ЗОЛОТО: Добавляй лут в "added_items", расходники в "removed_items", золото в "gold_change".
-4. НАГРАДА ЗА ОПЫТ D&D 5e ("xp_change"): Всегда награждай персонажей опытом за победы над врагами, успешные проверки навыков, разгаданные тайны, переговоры и сюжетные достижения (например: "xp_change": 50 за легкую стычку/проверку, 100-250 за опасный бой/квест, 500+ за босса).
+4. ЯЧЕЙКИ И СОСТОЯНИЯ: Списывай слоты в "spell_slots_used", восстанавливай в "spell_slots_recovered", накладывай/снимай эффекты в "conditions_added" / "conditions_removed".
+5. НАГРАДА ЗА ОПЫТ D&D 5e ("xp_change"): Всегда награждай персонажей опытом за победы над врагами, успешные проверки навыков, разгаданные тайны, переговоры и сюжетные достижения.
 
 [🌍 СЕТТИНГ И АТМОСФЕРА МИРА]:
 - Сеттинг: ${world.customSetting || 'Классическое темное фэнтези Забытых Королевств'}
@@ -960,6 +1174,7 @@ ${userCustomPrompt ? `\n[ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ ИГ�
             messages: messages,
             temperature: 0.75,
             max_tokens: 4000,
+            response_format: { type: 'json_object' },
           }),
           signal: controller.signal,
         });
@@ -1019,6 +1234,7 @@ ${userCustomPrompt ? `\n[ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ ИГ�
               messages: messages,
               temperature: 0.75,
               max_tokens: 3000,
+              response_format: { type: 'json_object' },
             }),
             signal: controller.signal,
           });
@@ -1056,7 +1272,11 @@ ${userCustomPrompt ? `\n[ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ ИГ�
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
-                generationConfig: { temperature: 0.75, maxOutputTokens: 3000 },
+                generationConfig: {
+                  temperature: 0.75,
+                  maxOutputTokens: 3000,
+                  responseMimeType: 'application/json',
+                },
               }),
               signal: controller.signal,
             });
@@ -1089,6 +1309,7 @@ ${userCustomPrompt ? `\n[ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ ИГ�
             messages: messages,
             temperature: 0.75,
             max_tokens: 3000,
+            response_format: { type: 'json_object' },
           };
 
           const controller = new AbortController();
@@ -1141,15 +1362,20 @@ ${userCustomPrompt ? `\n[ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ ИГ�
       action,
       currentDay,
       currentMinutes,
-      partyPlayers
+      partyPlayers,
+      world.difficulty
     );
 
     if (!parsedResponse.requires_roll) {
-      parsedResponse.requires_roll = { needed: false };
+      parsedResponse.requires_roll = { needed: false, advantage_type: 'normal' };
+    } else if (parsedResponse.requires_roll.needed && !parsedResponse.requires_roll.advantage_type) {
+      parsedResponse.requires_roll.advantage_type = 'normal';
     }
-    if (!parsedResponse.suggested_actions || !Array.isArray(parsedResponse.suggested_actions)) {
+
+    if (!parsedResponse.suggested_actions || !Array.isArray(parsedResponse.suggested_actions) || parsedResponse.suggested_actions.length === 0) {
       parsedResponse.suggested_actions = ['Осмотреться вокруг', 'Прислушаться', 'Двигаться дальше'];
     }
+
     if (!parsedResponse.state_update) {
       parsedResponse.state_update = {
         hp_change: 0,
@@ -1157,6 +1383,15 @@ ${userCustomPrompt ? `\n[ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ ИГ�
         removed_items: [],
         gold_change: 0,
         location_name: 'Текущая зона',
+        time_passed_minutes: 15,
+      };
+    }
+
+    if (!parsedResponse.active_combat) {
+      parsedResponse.active_combat = {
+        is_active: false,
+        round: 0,
+        enemies: [],
       };
     }
 

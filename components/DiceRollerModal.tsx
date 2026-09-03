@@ -9,6 +9,7 @@ interface DiceRollerModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSendToChat?: (rollSummary: string) => void;
+  onTriggerScreenRoll?: (options: any) => void;
 }
 
 type DiceType = 'd4' | 'd6' | 'd8' | 'd10' | 'd12' | 'd20' | 'd100';
@@ -27,6 +28,7 @@ export const DiceRollerModal: React.FC<DiceRollerModalProps> = ({
   isOpen,
   onClose,
   onSendToChat,
+  onTriggerScreenRoll,
 }) => {
   const [selectedDice, setSelectedDice] = useState<DiceType>('d20');
   const [diceCount, setDiceCount] = useState<number>(1);
@@ -42,6 +44,32 @@ export const DiceRollerModal: React.FC<DiceRollerModalProps> = ({
 
   const handleRoll = () => {
     if (isRolling) return;
+
+    if (onTriggerScreenRoll) {
+      onTriggerScreenRoll({
+        title: `Бросок ${diceCount}${selectedDice} ${modifier !== 0 ? (modifier > 0 ? `+${modifier}` : modifier) : ''}`,
+        modifier: modifier,
+        mode: mode,
+        diceSides: currentDiceConfig.sides,
+        onComplete: (res: any) => {
+          const rollResult: DiceRollResult = {
+            diceType: selectedDice,
+            count: diceCount,
+            rolls: res.roll2 !== undefined ? [res.roll1, res.roll2] : [res.finalD20],
+            modifier,
+            total: res.total,
+            advantage: mode === 'advantage',
+            disadvantage: mode === 'disadvantage',
+            isCrit: res.isCrit,
+            isFumble: res.isFumble,
+          };
+          setLatestResult(rollResult);
+          setRollHistory((prev) => [rollResult, ...prev.slice(0, 9)]);
+        },
+      });
+      return;
+    }
+
     setIsRolling(true);
     playDiceRollSound();
 
