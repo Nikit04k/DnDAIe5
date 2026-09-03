@@ -22,6 +22,18 @@ export interface DirectDmRequest {
   useGemini?: boolean;
   geminiApiKey?: string;
   geminiModel?: string;
+  useLmStudio?: boolean;
+  lmStudioUrl?: string;
+  lmStudioModel?: string;
+  lmStudioApiKey?: string;
+}
+
+export function isStandaloneMobile(): boolean {
+  if (typeof window === 'undefined') return false;
+  if (process.env.NEXT_PUBLIC_EXPORT === 'true') return true;
+  if (Boolean((window as any).Capacitor)) return true;
+  if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) return true;
+  return false;
 }
 
 function enrichStateUpdateFromNarrative(
@@ -104,20 +116,66 @@ function enrichStateUpdateFromNarrative(
     }
   }
 
-  // 4. Extract Items
+  // 4. Extract Items from player take actions, text narrative & chronicle status block
   if (!parsed.state_update.added_items) {
     parsed.state_update.added_items = [];
   }
 
-  const itemGainRegex = /(?:наход(?:ите|ит)|получа(?:ете|ет)|вруча(?:ет|ют)(?:\s+вам)?|подбира(?:ете|ет)|в сундуке(?: лежит)?|награда:)\s*(?:новый предмет:?|предмет:?|трофей:?)?\s*([«"“][^»"”\n]+[»"”]|\[[^\]\n]+\]|\b(?:Зелье|Свиток|Меч|Кинжал|Ключ|Амулет|Кольцо|Доспех|Щит|Артефакт|Книга|Камень|Посох|Лук|Топор|Молот|Шлем|Плащ|Браслет|Фляга|Карта|Кристалл|Эликсир|Фонарь|Оберег)\s+[А-Яа-яЁёA-Za-z0-9\s()+-]+)/gi;
+  // 4a. Check if player expressed intent to take/pick up items in actionText (e.g. "я беру кинжал", "я взял зелье", "забираю свиток", "подбираю амулет")
+  const actionLower = actionText.toLowerCase();
+  const isTakeAction = /(?:я\s+)?(?:беру|взял|взяла|забираю|заберу|забрал|забрала|подбираю|подобрал|подобрала|хватаю|покупаю|купил|купила|согласен\s+взять|согласна\s+взять|соглашаюсь\s+взять|кладу\s+в\s+рюкзак|прячу\s+в\s+сумку)/i.test(actionLower);
+
+  if (isTakeAction) {
+    const takeMatch = actionText.match(/(?:я\s+)?(?:беру|взял|взяла|забираю|заберу|забрал|забрала|подбираю|подобрал|подобрала|хватаю|покупаю|купил|купила|согласен\s+взять|согласна\s+взять|соглашаюсь\s+взять|кладу\s+в\s+рюкзак|прячу\s+в\s+сумку)\s+(?:себе\s+)?([^.!?\n]+)/i);
+    if (takeMatch && takeMatch[1]) {
+      const candidateString = takeMatch[1]
+        .replace(/^(?:этот|эти|тот|ту|эту|все|всё|их)\s+/i, '')
+        .replace(/\s+(?:и\s+кладу.*|и\s+прячу.*|в\s+рюкзак.*|в\s+сумку.*)$/i, '')
+        .trim();
+
+      const candidateItems = candidateString
+        .split(/(?:,|\s+и\s+)/i)
+        .map((s) => s.trim().replace(/[«»"“\[\]]/g, ''))
+        .filter((s) => s.length > 2 && s.length < 50);
+
+      for (const rawCandidate of candidateItems) {
+        const cleanCandidate = rawCandidate.replace(/^(?:свой|свои|этот|эту|тот|такой|себе)\s+/i, '').trim();
+        if (
+          cleanCandidate.length > 2 &&
+          !cleanCandidate.toLowerCase().includes('урон') &&
+          !cleanCandidate.toLowerCase().includes('бросок') &&
+          !cleanCandidate.toLowerCase().includes('золот')
+        ) {
+          const capitalized = cleanCandidate.charAt(0).toUpperCase() + cleanCandidate.slice(1);
+          if (!parsed.state_update.added_items.some((it) => it.toLowerCase() === capitalized.toLowerCase())) {
+            if (
+              !currentCharacter?.inventory?.some((it) => it.toLowerCase() === capitalized.toLowerCase()) &&
+              !currentCharacter?.equippedItems?.some((it) => it.toLowerCase() === capitalized.toLowerCase())
+            ) {
+              const isRefusal = /не\s+(?:удалось|получилось|можете|смог|смогла|хватает|нашел|нашли|нет)/i.test(text);
+              if (!isRefusal) {
+                parsed.state_update.added_items.push(capitalized);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // 4b. Extract Items from narrative text
+  const itemGainRegex = /(?:наход(?:ите|ит|ят)|получа(?:ете|ет|ют)|вруча(?:ет|ют|ется)(?:\s+вам)?|подбира(?:ете|ет|ют)|подобрал(?:и)?|берет(?:е)?|бер[её]те|взял(?:и)?|забира(?:ете|ет|ют)|забрал(?:и)?|кладет(?:е)?\s+в\s+(?:рюкзак|сумку)|пряч(?:ете|ет)\s+в\s+(?:сумку|карман)|в сундуке(?: лежит)?|награда:)\s*(?:новый предмет:?|предмет:?|трофей:?|себе\s+)?\s*([«"“][^»"”\n]+[»"”]|\[[^\]\n]+\]|\b(?:Зелье|Эликсир|Снадобье|Свиток|Меч|Кинжал|Клинок|Шпага|Рапира|Сабля|Топор|Секира|Молот|Булава|Посох|Жезл|Лук|Арбалет|Щит|Доспех|Кольчуга|Панцирь|Шлем|Плащ|Мантия|Сапоги|Перчатки|Кольцо|Амулет|Оберег|Талисман|Медальон|Ожерелье|Браслет|Ключ|Карта|Книга|Гримуар|Фолиант|Камень|Кристалл|Самоцвет|Рубин|Алмаз|Изумруд|Сапфир|Фляга|Бутыль|Факел|Фонарь|Огниво|Веревка|Отмычки|Кошель|Сухпаек|Рацион)\s+[А-Яа-яЁёA-Za-z0-9\s()+-]+)/gi;
 
   let itemMatch;
   while ((itemMatch = itemGainRegex.exec(text)) !== null) {
     if (itemMatch[1]) {
       const rawItem = itemMatch[1].replace(/[«»"“\[\]]/g, '').trim();
       if (rawItem.length > 2 && rawItem.length < 60 && !rawItem.toLowerCase().includes('урон') && !rawItem.toLowerCase().includes('золот')) {
-        if (!parsed.state_update.added_items.includes(rawItem)) {
-          if (!currentCharacter?.inventory?.includes(rawItem)) {
+        if (!parsed.state_update.added_items.some((it) => it.toLowerCase() === rawItem.toLowerCase())) {
+          if (
+            !currentCharacter?.inventory?.some((it) => it.toLowerCase() === rawItem.toLowerCase()) &&
+            !currentCharacter?.equippedItems?.some((it) => it.toLowerCase() === rawItem.toLowerCase())
+          ) {
             parsed.state_update.added_items.push(rawItem);
           }
         }
@@ -130,7 +188,6 @@ function enrichStateUpdateFromNarrative(
     parsed.state_update.removed_items = [];
   }
 
-  const actionLower = actionText.toLowerCase();
   if (currentCharacter?.inventory && currentCharacter.inventory.length > 0) {
     for (const item of currentCharacter.inventory) {
       const itemLower = item.toLowerCase();
@@ -299,6 +356,10 @@ export async function executeDirectDmTurn(request: DirectDmRequest): Promise<DmR
     useGemini = false,
     geminiApiKey: userGeminiApiKey,
     geminiModel: userGeminiModel,
+    useLmStudio = false,
+    lmStudioUrl: userLmStudioUrl,
+    lmStudioModel: userLmStudioModel,
+    lmStudioApiKey: userLmStudioApiKey,
   } = request;
 
   const currentDay = inGameDay || 1;
@@ -323,10 +384,12 @@ export async function executeDirectDmTurn(request: DirectDmRequest): Promise<DmR
   const systemInstruction = `Ты — элитный Dungeon Master D&D 5-й редакции.
 Ведешь атмосферное, захватывающее и честное приключение на русском языке.
 
-ПРАВИЛО ИНВЕНТАРЯ (ЖЕСТКИЙ АНТИЧИТ):
-Инвентарь персонажа (${character.name}): [${inventoryList}].
-Золото: ${character.gold} gp.
-Игрок НЕ МОЖЕТ использовать или доставать предметы, которых нет в этом списке.
+ПРАВИЛО ИНВЕНТАРЯ И АВТОМАТИЧЕСКОЕ ДОБАВЛЕНИЕ ПРЕДМЕТОВ:
+1. Инвентарь персонажа (${character.name}): [${inventoryList}].
+2. Золото: ${character.gold} gp.
+3. Игрок НЕ МОЖЕТ использовать или доставать предметы, которых нет в этом списке.
+4. Игрок не может добавлять предметы вручную. Новые предметы в инвентарь добавляешь ТОЛЬКО ТЫ через "added_items" в state_update!
+5. Когда в сюжете найдены предметы/лут/награда или игрок пишет «я беру...», «я взял...», «забираю...», «подбираю...», «покупаю...» — обязательно добавь эти предметы в "added_items": ["Название предмета"] в state_update! При покупке спиши золото через "gold_change": -X. При расходе укажи предмет в "removed_items".
 
 МИР И СЕТТИНГ:
 - Сеттинг: ${world.customSetting || 'Классическое темное фэнтези Забытых Королевств'}
@@ -372,8 +435,47 @@ ${userCustomPrompt ? `\nДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ:\n${us
   let successfulReasoning = '';
   let providerUsed = '';
 
-  // 1. Try Google Gemini API if enabled
-  if (isGeminiActive && geminiApiKey) {
+  // 1. Try LM Studio if enabled
+  if (useLmStudio && userLmStudioUrl) {
+    try {
+      const lmBase = userLmStudioUrl.replace(/\/+$/, '');
+      const lmHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (userLmStudioApiKey) lmHeaders['Authorization'] = `Bearer ${userLmStudioApiKey}`;
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 20000);
+
+      const lmRes = await fetch(`${lmBase}/v1/chat/completions`, {
+        method: 'POST',
+        headers: lmHeaders,
+        body: JSON.stringify({
+          model: userLmStudioModel || 'local-model',
+          messages: messagesPayload,
+          temperature: 0.75,
+          max_tokens: 3000,
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (lmRes.ok) {
+        const lmData = await lmRes.json();
+        const choice = lmData.choices?.[0];
+        const raw = choice?.message?.content || '';
+        const reasoning = choice?.message?.reasoning || choice?.reasoning || '';
+        if (raw && raw.trim().length > 0) {
+          successfulContent = raw;
+          successfulReasoning = reasoning;
+          providerUsed = 'lmstudio';
+        }
+      }
+    } catch (e) {
+      console.warn('[DirectAiClient] LM Studio call error:', e);
+    }
+  }
+
+  // 2. Try Google Gemini API if enabled
+  if (!successfulContent && isGeminiActive && geminiApiKey) {
     try {
       const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${geminiApiKey}`;
       const geminiBody = {
@@ -392,11 +494,16 @@ ${userCustomPrompt ? `\nДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ:\n${us
         },
       };
 
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 20000);
+
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(geminiBody),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
 
       if (res.ok) {
         const data = await res.json();
@@ -412,14 +519,17 @@ ${userCustomPrompt ? `\nДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ:\n${us
     }
   }
 
-  // 2. Try OpenRouter API / Fallback Cloud models if enabled
+  // 3. Try OpenRouter API / Fallback Cloud models if enabled
   if (!successfulContent && isOpenRouterActive) {
-    const candidateModels = [
-      userModelName || 'nvidia/nemotron-3-super-120b-a12b:free',
-      'eva-unit-01/eva-qwen-2.5-72b:free',
-      'minimax/minimax-01:free',
-      'google/gemma-2-9b-it:free',
-    ];
+    const candidateModels = Array.from(
+      new Set([
+        userModelName || 'nvidia/nemotron-3-super-120b-a12b:free',
+        'nvidia/nemotron-3.5-lightning:free',
+        'poolside/laguna-s-2.1:free',
+        'minimax/minimax-m2.7:free',
+        'liquid/lfm-2.5-2.6b:free',
+      ])
+    );
 
     const baseUrl = userBaseUrl && userBaseUrl.trim().length > 0
       ? userBaseUrl.trim().replace(/\/+$/, '')
@@ -436,6 +546,9 @@ ${userCustomPrompt ? `\nДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ:\n${us
 
     for (const model of candidateModels) {
       try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 20000);
+
         const res = await fetch(`${baseUrl}/chat/completions`, {
           method: 'POST',
           headers,
@@ -445,7 +558,9 @@ ${userCustomPrompt ? `\nДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ:\n${us
             temperature: 0.75,
             max_tokens: 3000,
           }),
+          signal: controller.signal,
         });
+        clearTimeout(timeoutId);
 
         if (res.ok) {
           const data = await res.json();
@@ -482,4 +597,371 @@ ${userCustomPrompt ? `\nДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ:\n${us
     ...parsed,
     providerUsed,
   };
+}
+
+export async function testDirectAiConnection(options: {
+  apiKey?: string;
+  model?: string;
+  baseUrl?: string;
+  testPrompt?: string;
+}): Promise<{
+  success: boolean;
+  status: number;
+  latencyMs: number;
+  response?: string;
+  error?: string;
+  modelUsed?: string;
+  usage?: any;
+}> {
+  const startTime = Date.now();
+  const {
+    apiKey: userApiKey = '',
+    model = 'nvidia/nemotron-3-super-120b-a12b:free',
+    baseUrl = '',
+    testPrompt = 'Ответь кратко (1-2 предложения) на русском языке: "Связь с Мастером Подземелий установлена!" и дай короткое напутствие игроку.',
+  } = options;
+
+  const apiKey = (userApiKey && userApiKey.trim().length > 0 ? userApiKey.trim() : '');
+  let resolvedBaseUrl = (baseUrl && baseUrl.trim().length > 0 ? baseUrl.trim() : '').replace(/\/+$/, '');
+  if (!resolvedBaseUrl) {
+    resolvedBaseUrl = 'https://openrouter.ai/api/v1';
+  }
+
+  // If testing OpenRouter without key and without custom URL
+  if (!apiKey && resolvedBaseUrl.includes('openrouter.ai')) {
+    return {
+      success: false,
+      status: 401,
+      latencyMs: 0,
+      error: 'API-ключ OpenRouter не введен. Вставьте ваш ключ (sk-or-v1-...) в поле выше. Создать бесплатный ключ можно на openrouter.ai/keys (для моделей :free баланс пополнять не нужно).',
+      modelUsed: model,
+    };
+  }
+
+  const endpointUrl = `${resolvedBaseUrl}/chat/completions`;
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (apiKey) {
+    headers['Authorization'] = `Bearer ${apiKey}`;
+    headers['HTTP-Referer'] = 'https://dndaie5.app';
+    headers['X-Title'] = 'DnDAIe5 Mobile Test';
+  }
+
+  const payload = {
+    model: model || 'nvidia/nemotron-3-super-120b-a12b:free',
+    messages: [
+      {
+        role: 'system',
+        content: 'Ты — опытный Dungeon Master в D&D 5e. Твой ответ должен быть СТРОГО на русском языке.',
+      },
+      {
+        role: 'user',
+        content: testPrompt,
+      },
+    ],
+    max_tokens: 300,
+    temperature: 0.7,
+  };
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 20000);
+
+  try {
+    const res = await fetch(endpointUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    const latencyMs = Date.now() - startTime;
+
+    if (!res.ok) {
+      const errorText = await res.text().catch(() => '');
+      let parsedError = errorText;
+      try {
+        const jsonErr = JSON.parse(errorText);
+        parsedError = jsonErr.error?.message || jsonErr.message || errorText;
+      } catch {}
+
+      let userFriendlyMessage = `Ошибка сервера API (${res.status}): ${parsedError}`;
+      if (res.status === 401) {
+        userFriendlyMessage = `Неверный или недействительный API Ключ (401 Unauthorized). Проверьте ключ OpenRouter на https://openrouter.ai/keys.`;
+      } else if (res.status === 403) {
+        userFriendlyMessage = `Доступ ограничен (403 Forbidden). Проверьте настройки ключа на openrouter.ai.`;
+      } else if (res.status === 404) {
+        userFriendlyMessage = `Модель "${model}" временно недоступна на OpenRouter (404). Выберите другую модель (:free) из списка.`;
+      } else if (res.status === 429) {
+        userFriendlyMessage = `Превышен лимит запросов к бесплатной модели (429 Rate Limit). Подождите несколько секунд или выберите другую модель (:free).`;
+      }
+
+      return {
+        success: false,
+        status: res.status,
+        latencyMs,
+        error: userFriendlyMessage,
+        modelUsed: model,
+      };
+    }
+
+    const data = await res.json();
+    let text = data.choices?.[0]?.message?.content || '';
+    text = text.replace(/<(?:think|thought)>[\s\S]*?<\/(?:think|thought)>/gi, '').trim();
+
+    if (!text) {
+      const reasoning = data.choices?.[0]?.message?.reasoning;
+      if (reasoning) {
+        text = reasoning;
+      } else {
+        return {
+          success: false,
+          status: 200,
+          latencyMs,
+          error: 'Модель успешно ответила, но тело ответа пустое.',
+          modelUsed: model,
+        };
+      }
+    }
+
+    return {
+      success: true,
+      status: 200,
+      latencyMs,
+      response: text,
+      modelUsed: data.model || model,
+      usage: data.usage || null,
+    };
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    const latencyMs = Date.now() - startTime;
+    const isTimeout = err.name === 'AbortError' || err.message?.includes('timeout') || err.message?.includes('aborted');
+
+    return {
+      success: false,
+      status: 500,
+      latencyMs,
+      error: isTimeout
+        ? 'Таймаут подключения (20 сек): сервер нейросети не ответил вовремя. Проверьте интернет или выберите другую модель.'
+        : `Ошибка сети: ${err?.message || 'Не удалось связаться с сервером нейросети'}`,
+      modelUsed: model,
+    };
+  }
+}
+
+export async function testDirectGeminiConnection(options: {
+  apiKey?: string;
+  model?: string;
+  testPrompt?: string;
+}): Promise<{
+  success: boolean;
+  status: number;
+  latencyMs: number;
+  response?: string;
+  error?: string;
+  modelUsed?: string;
+}> {
+  const startTime = Date.now();
+  const {
+    apiKey: userApiKey = '',
+    model: userModel = 'gemini-3.6-flash',
+    testPrompt = 'Ответь кратко (1-2 предложения) на русском языке: "Связь с Gemini API успешно установлена!" и приветствуй игрока.',
+  } = options;
+
+  const apiKey = userApiKey && userApiKey.trim().length > 0 ? userApiKey.trim() : '';
+  if (!apiKey) {
+    return {
+      success: false,
+      status: 401,
+      latencyMs: 0,
+      error: 'API-ключ Gemini не введён. Получите бесплатный ключ в Google AI Studio (aistudio.google.com) и вставьте в поле выше.',
+      modelUsed: userModel,
+    };
+  }
+
+  const requestedModel = userModel.replace(/^models\//, '');
+  const geminiModelsToTry = Array.from(
+    new Set([
+      requestedModel,
+      'gemini-3.7-flash',
+      'gemini-3.6-flash',
+      'gemini-2.5-flash',
+    ])
+  );
+
+  let textResult = '';
+  let usedModel = requestedModel;
+  let lastError = '';
+  let responseStatus = 200;
+
+  for (const curModel of geminiModelsToTry) {
+    try {
+      const nativeEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/${curModel}:generateContent?key=${apiKey}`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+      const res = await fetch(nativeEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: `[Инструкция: Отвечай строго на русском языке]\n\n${testPrompt}` }],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 300,
+          },
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+      responseStatus = res.status;
+
+      if (res.ok) {
+        const data = await res.json();
+        const txt = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        if (txt && txt.trim().length > 0) {
+          textResult = txt.trim();
+          usedModel = curModel;
+          break;
+        }
+      } else {
+        const errBody = await res.text().catch(() => '');
+        let parsedMsg = errBody;
+        try {
+          const parsed = JSON.parse(errBody);
+          parsedMsg = parsed.error?.message || errBody;
+        } catch {}
+        lastError = `[${curModel}] ${parsedMsg}`;
+      }
+    } catch (err: any) {
+      lastError = err?.message || 'Ошибка сети';
+    }
+  }
+
+  const latencyMs = Date.now() - startTime;
+
+  if (!textResult) {
+    let userFriendly = `Ошибка Gemini API (${responseStatus}): ${lastError}`;
+    if (responseStatus === 400 || responseStatus === 403 || responseStatus === 401) {
+      userFriendly = `Ошибка ключа или доступа (${responseStatus}): ${lastError || 'Проверьте ваш API-ключ в Google AI Studio.'}`;
+    } else if (responseStatus === 429) {
+      userFriendly = `Достигнут лимит запросов Gemini Free Tier (429 Rate Limit). Подождите минуту (лимит 15 запросов в минуту).`;
+    }
+
+    return {
+      success: false,
+      status: responseStatus,
+      latencyMs,
+      error: userFriendly,
+      modelUsed: usedModel,
+    };
+  }
+
+  return {
+    success: true,
+    status: 200,
+    latencyMs,
+    response: textResult,
+    modelUsed: usedModel,
+  };
+}
+
+export async function testDirectLmStudioConnection(options: {
+  url?: string;
+  model?: string;
+  apiKey?: string;
+  testPrompt?: string;
+}): Promise<{
+  success: boolean;
+  status: number;
+  latencyMs: number;
+  response?: string;
+  error?: string;
+  modelUsed?: string;
+  availableModels?: string[];
+}> {
+  const startTime = Date.now();
+  const {
+    url = 'http://localhost:1234',
+    model = '',
+    apiKey = '',
+    testPrompt = 'Ответь кратко на русском: Связь с локальной нейросетью через LM Studio успешно установлена!',
+  } = options;
+
+  const baseUrl = url.replace(/\/+$/, '');
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (apiKey) {
+    headers['Authorization'] = `Bearer ${apiKey}`;
+  }
+
+  let availableModels: string[] = [];
+  try {
+    const modelsRes = await fetch(`${baseUrl}/v1/models`, { headers });
+    if (modelsRes.ok) {
+      const mData = await modelsRes.json();
+      if (Array.isArray(mData?.data)) {
+        availableModels = mData.data.map((m: any) => m.id).filter(Boolean);
+      }
+    }
+  } catch {}
+
+  const modelToUse = model || availableModels[0] || 'local-model';
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model: modelToUse,
+        messages: [{ role: 'user', content: testPrompt }],
+        max_tokens: 200,
+        temperature: 0.7,
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    const latencyMs = Date.now() - startTime;
+
+    if (!res.ok) {
+      const errTxt = await res.text().catch(() => '');
+      return {
+        success: false,
+        status: res.status,
+        latencyMs,
+        error: `LM Studio вернул ошибку (${res.status}): ${errTxt}`,
+        modelUsed: modelToUse,
+        availableModels,
+      };
+    }
+
+    const data = await res.json();
+    const text = data.choices?.[0]?.message?.content || '';
+    return {
+      success: true,
+      status: 200,
+      latencyMs,
+      response: text,
+      modelUsed: data.model || modelToUse,
+      availableModels,
+    };
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    const latencyMs = Date.now() - startTime;
+    return {
+      success: false,
+      status: 500,
+      latencyMs,
+      error: `Не удалось связаться с LM Studio по адресу ${baseUrl}: ${err?.message || 'Сервер недоступен'}. Если играете с телефона, укажите локальный IP вашего ПК (например, http://192.168.1.150:1234).`,
+      modelUsed: modelToUse,
+      availableModels,
+    };
+  }
 }

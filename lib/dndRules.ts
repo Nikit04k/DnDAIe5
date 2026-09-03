@@ -399,37 +399,37 @@ export const DND_5E_ADVENTURING_PACKS: Dnd5eAdventuringPack[] = [
     id: 'dungeoneer',
     nameRu: 'Набор исследователя подземелий',
     description: 'Для походов в пещеры, катакомбы и темницы',
-    items: ['Рюкзак', 'Спальник', '10 факелов', 'Трутница', 'Пеньковая веревка 15м', 'Сухпаек (10 шт.)', 'Фляга для воды'],
+    items: ['Рюкзак', 'Спальник', 'Факел (10 шт.)', 'Трутница', 'Пеньковая веревка 15м', 'Сухпаек (10 шт.)', 'Фляга для воды'],
   },
   {
     id: 'explorer',
     nameRu: 'Набор путешественника / Следопыта',
     description: 'Для дальних странствий по дикой природе',
-    items: ['Рюкзак', 'Спальник', 'Походный котелок', 'Трутница', '10 факелов', 'Сухпаек (10 шт.)', 'Бурдюк с водой'],
+    items: ['Рюкзак', 'Спальник', 'Походный котелок', 'Трутница', 'Факел (10 шт.)', 'Сухпаек (10 шт.)', 'Бурдюк с водой'],
   },
   {
     id: 'burglar',
     nameRu: 'Набор взломщика / Грабителя',
     description: 'Для скрытных операций и проникновений',
-    items: ['Рюкзак', '1000 стальных шариков', 'Колокольчик', '5 свечей', 'Лом', 'Молоток и 10 колышков', 'Шелковая веревка 15м', 'Сухпаек (5 шт.)'],
+    items: ['Рюкзак', 'Стальные шарики (1000 шт.)', 'Колокольчик', 'Свеча (5 шт.)', 'Лом', 'Молоток', 'Колышки (10 шт.)', 'Шелковая веревка 15м', 'Сухпаек (5 шт.)'],
   },
   {
     id: 'priest',
     nameRu: 'Набор священника / Клирика',
     description: 'Для служителей богов и паломников',
-    items: ['Рюкзак', 'Одеяло', '10 свечей', 'Трутница', 'Коробка для подаяний', 'Ладан и кадильница', 'Сухпаек (5 шт.)', 'Фляга со святой водой'],
+    items: ['Рюкзак', 'Одеяло', 'Свеча (10 шт.)', 'Трутница', 'Коробка для подаяний', 'Ладан и кадильница', 'Сухпаек (5 шт.)', 'Святая вода (1 шт.)'],
   },
   {
     id: 'scholar',
     nameRu: 'Набор ученого / Мага',
     description: 'Для магов, алхимиков и мудрецов',
-    items: ['Рюкзак', 'Книга по фольклору', 'Чернильница и перо', '10 листов пергамента', 'Мешочек с песком', 'Сухпаек (5 шт.)'],
+    items: ['Рюкзак', 'Книга по фольклору', 'Чернильница и перо', 'Пергамент (10 шт.)', 'Мешочек с песком', 'Сухпаек (5 шт.)'],
   },
   {
     id: 'diplomat',
     nameRu: 'Набор дипломата / Дворянина',
     description: 'Для светских приемов и переговоров',
-    items: ['Сундук', '2 футляра для карт и свитков', 'Комплект отличной одежды', 'Флакон чернил', 'Перо', 'Сургуч и печать', 'Сухпаек (5 шт.)'],
+    items: ['Сундук', 'Футляр для карт (2 шт.)', 'Комплект отличной одежды', 'Флакон чернил', 'Перо', 'Сургуч и печать', 'Сухпаек (5 шт.)'],
   },
 ];
 
@@ -541,7 +541,8 @@ export const CHARACTER_PRESETS: CharacterPreset[] = [
       'Воровские инструменты',
       'Моток шелковой веревки (15м)',
       'Зелье лечения (2d4+2 HP)',
-      'Огниво и факелы (3 шт)',
+      'Факел (3 шт.)',
+      'Огниво',
     ],
     gold: 25,
     bio: 'Бывший разведчик из руин эльфийской цитадели. Движется бесшумно, как ночной туман, и наносит удары точно в уязвимые точки.',
@@ -568,7 +569,8 @@ export const CHARACTER_PRESETS: CharacterPreset[] = [
       'Священный амулет Солнечного Ордена',
     ],
     inventory: [
-      'Тяжелый арбалет и 20 болтов',
+      'Тяжелый арбалет',
+      'Арбалетные болты (20 шт.)',
       'Зелье лечения (2d4+2 HP)',
       'Сухпаек (5 шт.)',
     ],
@@ -598,7 +600,7 @@ export const CHARACTER_PRESETS: CharacterPreset[] = [
       'Священный тотем предков',
     ],
     inventory: [
-      'Святая вода (2 флакона)',
+      'Святая вода (2 шт.)',
       'Походная аптечка целителя',
       'Освященный елей',
     ],
@@ -697,44 +699,175 @@ export const CHARACTER_PRESETS: CharacterPreset[] = [
   },
 ];
 
+export interface ParsedItemQuantity {
+  baseName: string;
+  count: number;
+  formatted: string;
+}
+
 /**
- * Normalizes any ration phrasing ("Сухпаек на 3 дня", "Сухпаек на 10 дней", "Сухпаек на неделю", "Сухпаек на 1 день", "Рацион на 5 дней")
- * into per-day piece count: "Сухпаек (X шт.)" or "Сухпаек (1 шт.)".
- * 1 штука = 1 день пропитания.
+ * Universal D&D 5e Item Quantity Parser
+ * Accurately parses and normalizes item counts e.g.:
+ * - "10 факелов" -> baseName: "Факел", count: 10, formatted: "Факел (10 шт.)"
+ * - "Факелы (10 шт.)" -> baseName: "Факел", count: 10, formatted: "Факел (10 шт.)"
+ * - "Сухпаек (5 шт.)" -> baseName: "Сухпаек", count: 5, formatted: "Сухпаек (5 шт.)"
+ * - "Свечи (5 шт.)" -> baseName: "Свеча", count: 5, formatted: "Свеча (5 шт.)"
+ * - "Зелье лечения (2 шт.)" -> baseName: "Зелье лечения", count: 2, formatted: "Зелье лечения (2 шт.)"
+ * - "Зелье лечения (2d4+2 HP)" -> baseName: "Зелье лечения (2d4+2 HP)", count: 1
  */
+export function parseItemQuantity(rawItem: string): ParsedItemQuantity {
+  if (!rawItem || typeof rawItem !== 'string') {
+    return { baseName: rawItem || '', count: 1, formatted: rawItem || '' };
+  }
+
+  let item = rawItem.trim();
+  if (!item) {
+    return { baseName: '', count: 1, formatted: '' };
+  }
+
+  // 1. Check for existing (X шт.) or (X шт) or (X флакона) or (X флаконов) or (X листов) in parentheses
+  const parenCountMatch = item.match(/^(.*?)\s*\((\d+)\s*(?:шт|штук|флакон\w*|лист\w*|порци\w*|стрел\w*|болт\w*|свеч\w*|факел\w*)\.?\)\s*$/i);
+  if (parenCountMatch) {
+    let base = parenCountMatch[1].trim();
+    const count = parseInt(parenCountMatch[2], 10) || 1;
+    if (base.toLowerCase() === 'факелы') base = 'Факел';
+    if (base.toLowerCase() === 'свечи') base = 'Свеча';
+    if (base.toLowerCase() === 'зелья лечения') base = 'Зелье лечения';
+    if (base.toLowerCase() === 'футляры для карт') base = 'Футляр для карт';
+    if (base.toLowerCase() === 'флаконы святой воды') base = 'Святая вода';
+    if (base.toLowerCase() === 'колышки') base = 'Колышки';
+
+    return {
+      baseName: base,
+      count,
+      formatted: count > 1 ? `${base} (${count} шт.)` : base,
+    };
+  }
+
+  // 2. Check for leading number e.g. "10 факелов", "5 свечей", "1000 стальных шариков", "20 стрел", "2 зелья лечения", "2 флакона святой воды"
+  const leadingNumMatch = item.match(/^(\d+)\s+([А-Яа-яЁёA-Za-z0-9\s()+-]+)$/);
+  if (leadingNumMatch) {
+    const count = parseInt(leadingNumMatch[1], 10) || 1;
+    const namePart = leadingNumMatch[2].trim();
+    const lowerName = namePart.toLowerCase();
+
+    let base = namePart;
+    if (lowerName.includes('факел')) base = 'Факел';
+    else if (lowerName.includes('свеч')) base = 'Свеча';
+    else if (lowerName.includes('стальных шарик') || lowerName.includes('стальные шарик')) base = 'Стальные шарики';
+    else if (lowerName.includes('лист') && lowerName.includes('пергамент')) base = 'Пергамент';
+    else if (lowerName.includes('футляр')) base = 'Футляр для карт и свитков';
+    else if (lowerName.includes('колышк')) base = 'Колышки';
+    else if (lowerName.includes('стрел')) base = 'Стрелы';
+    else if (lowerName.includes('болт')) base = 'Арбалетные болты';
+    else if (lowerName.includes('зель') && lowerName.includes('лечен')) base = 'Зелье лечения';
+    else if (lowerName.includes('фляг') && lowerName.includes('масл')) base = 'Фляга с маслом';
+    else if (lowerName.includes('святая вода') || lowerName.includes('святой вод')) base = 'Святая вода';
+    else if (lowerName.includes('сухпаек') || lowerName.includes('рацион')) base = 'Сухпаек';
+    else {
+      base = namePart.charAt(0).toUpperCase() + namePart.slice(1);
+    }
+
+    return {
+      baseName: base,
+      count,
+      formatted: count > 1 ? `${base} (${count} шт.)` : base,
+    };
+  }
+
+  // 3. Check for "Огниво и факелы (3 шт)" or "Тяжелый арбалет и 20 болтов"
+  if (item.toLowerCase().includes('огниво и факелы')) {
+    const m = item.match(/\((\d+)\s*шт\)/i);
+    const count = m ? parseInt(m[1], 10) : 3;
+    return { baseName: 'Факел', count, formatted: `Факел (${count} шт.)` };
+  }
+
+  // 4. Check for "Сухпаек на X дней" or "Сухпаек на неделю"
+  const lower = item.toLowerCase();
+  if (lower.includes('сухпаек') || lower.includes('сухой паек') || lower.includes('рацион')) {
+    if (lower.includes('недел')) {
+      return { baseName: 'Сухпаек', count: 7, formatted: 'Сухпаек (7 шт.)' };
+    }
+    const daysMatch = item.match(/(?:на|хватит на)\s*(\d+)\s*(?:дн|сут)/i);
+    if (daysMatch) {
+      const count = parseInt(daysMatch[1], 10) || 1;
+      return { baseName: 'Сухпаек', count, formatted: count > 1 ? `Сухпаек (${count} шт.)` : 'Сухпаек' };
+    }
+    return { baseName: 'Сухпаек', count: 1, formatted: 'Сухпаек' };
+  }
+
+  // Default: single item
+  return {
+    baseName: item,
+    count: 1,
+    formatted: item,
+  };
+}
+
+export function formatItemWithCount(baseName: string, count: number): string {
+  const cleanBase = baseName.replace(/\s*\(\d+\s*шт\.?\)/i, '').trim();
+  if (count <= 1) {
+    return cleanBase;
+  }
+  return `${cleanBase} (${count} шт.)`;
+}
+
 export function normalizeRationItem(item: string): string {
-  if (!item || typeof item !== 'string') return item;
-  const lower = item.toLowerCase().trim();
+  return parseItemQuantity(item).formatted;
+}
 
-  if (!lower.includes('сухпаек') && !lower.includes('сухой паек') && !lower.includes('рацион')) {
-    return item;
+/**
+ * Adds an item to the inventory array, automatically stacking quantities
+ * if an item with the same base name already exists.
+ */
+export function addItemToInventory(inventory: string[], newItem: string): string[] {
+  const parsedNew = parseItemQuantity(newItem);
+  const currentInv = (inventory || []).map(normalizeRationItem);
+
+  const existingIdx = currentInv.findIndex((it) => {
+    const parsed = parseItemQuantity(it);
+    return parsed.baseName.toLowerCase() === parsedNew.baseName.toLowerCase();
+  });
+
+  if (existingIdx !== -1) {
+    const existingParsed = parseItemQuantity(currentInv[existingIdx]);
+    const totalCount = existingParsed.count + parsedNew.count;
+    const updated = [...currentInv];
+    updated[existingIdx] = formatItemWithCount(existingParsed.baseName, totalCount);
+    return updated;
   }
 
-  // Already in "Сухпаек (X шт.)" format
-  const piecesMatch = item.match(/(?:сухпаек|сухой па[её]к|рацион).*?\((\d+)\s*шт\.?\)/i);
-  if (piecesMatch) {
-    const count = parseInt(piecesMatch[1], 10);
-    return `Сухпаек (${count} шт.)`;
+  return [...currentInv, parsedNew.formatted];
+}
+
+/**
+ * Removes or decrements an item in the inventory.
+ */
+export function removeItemFromInventory(inventory: string[], itemToRemove: string): string[] {
+  const parsedRemove = parseItemQuantity(itemToRemove);
+  const currentInv = (inventory || []).map(normalizeRationItem);
+
+  const existingIdx = currentInv.findIndex((it) => {
+    const parsed = parseItemQuantity(it);
+    return (
+      parsed.baseName.toLowerCase() === parsedRemove.baseName.toLowerCase() ||
+      it.toLowerCase() === itemToRemove.toLowerCase()
+    );
+  });
+
+  if (existingIdx === -1) {
+    return currentInv;
   }
 
-  // Match "на неделю" -> 7 шт.
-  if (lower.includes('недел')) {
-    return 'Сухпаек (7 шт.)';
+  const existingParsed = parseItemQuantity(currentInv[existingIdx]);
+  const newCount = existingParsed.count - parsedRemove.count;
+
+  if (newCount > 0) {
+    const updated = [...currentInv];
+    updated[existingIdx] = formatItemWithCount(existingParsed.baseName, newCount);
+    return updated;
   }
 
-  // Match "на X дней" or "на X дня" or "на X суток"
-  const daysMatch = item.match(/(?:на|хватит на)\s*(\d+)\s*(?:дн|сут)/i);
-  if (daysMatch) {
-    const count = parseInt(daysMatch[1], 10);
-    return `Сухпаек (${count} шт.)`;
-  }
-
-  // Match "на 1 день" or "на день"
-  if (lower.includes('на день') || lower.includes('на 1 день')) {
-    return 'Сухпаек (1 шт.)';
-  }
-
-  // If simply "Сухпаек" or "Походный рацион" without count, treat as 1 piece
-  return 'Сухпаек (1 шт.)';
+  return currentInv.filter((_, i) => i !== existingIdx);
 }
 

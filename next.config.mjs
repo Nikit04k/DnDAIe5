@@ -3,7 +3,8 @@ const isExport = process.env.NEXT_PUBLIC_EXPORT === 'true';
 
 const nextConfig = {
   output: isExport ? 'export' : undefined,
-  trailingSlash: true,
+  trailingSlash: isExport ? true : false,
+  serverExternalPackages: ['msedge-tts', 'ws'],
   images: {
     unoptimized: true,
   },

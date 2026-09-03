@@ -4,30 +4,46 @@
 
 @layer base {
   :root {
-    --background: #07080c;
+    --background: #06070a;
     --foreground: #f1f5f9;
   }
 
+  html,
   body {
     color: var(--foreground);
     background-color: var(--background);
     position: relative;
-    min-height: 100vh;
-    min-height: 100dvh;
+    height: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
+    overflow: hidden;
+    overscroll-behavior: none;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
 
-  /* GPU-accelerated static background: rasterized once into dedicated compositor layer, never repainted on scroll */
+  /* GPU-accelerated static background: dark dungeon stone masonry */
   body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -2;
+    pointer-events: none;
+    background-image: url('/dungeon_stone_bg.jpg');
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    transform: translateZ(0);
+  }
+
+  /* Dark ambient atmosphere overlay */
+  body::after {
     content: "";
     position: fixed;
     inset: 0;
     z-index: -1;
     pointer-events: none;
-    background-image: 
-      radial-gradient(circle at 50% 0%, rgba(217, 119, 6, 0.05) 0%, transparent 60%),
-      radial-gradient(circle at 100% 100%, rgba(139, 92, 246, 0.03) 0%, transparent 40%);
+    background: radial-gradient(circle at 50% 45%, rgba(11, 15, 25, 0.35) 0%, rgba(3, 5, 8, 0.85) 100%);
     transform: translateZ(0);
   }
 }
@@ -137,6 +153,24 @@ html, body {
   overscroll-behavior-y: none;
 }
 
+/* Mystical Rune Circle pulse animation */
+@keyframes runeGlow {
+  0%, 100% {
+    opacity: 0.45;
+    filter: drop-shadow(0 0 25px rgba(56, 189, 248, 0.35));
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.60;
+    filter: drop-shadow(0 0 38px rgba(56, 189, 248, 0.55));
+    transform: scale(1.015);
+  }
+}
+
+.animate-rune-glow {
+  animation: runeGlow 8s ease-in-out infinite;
+}
+
 /* GPU Performance / Saver Mode Styles */
 .gpu-saver *,
 .gpu-saver *::before,
@@ -158,8 +192,13 @@ html, body {
 
 .gpu-saver .animate-pulse,
 .gpu-saver .animate-ping,
-.gpu-saver .animate-bounce {
+.gpu-saver .animate-bounce,
+.gpu-saver .animate-rune-glow {
   animation: none !important;
+}
+
+.gpu-saver .animate-rune-glow {
+  opacity: 0.48 !important;
 }
 
 /* Respect user's motion preferences */
@@ -171,4 +210,5 @@ html, body {
     scroll-behavior: auto !important;
   }
 }
+
 

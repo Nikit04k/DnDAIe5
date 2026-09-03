@@ -83,20 +83,66 @@ function enrichStateUpdateFromNarrative(
     }
   }
 
-  // 4. Extract Items from text & chronicle status block
+  // 4. Extract Items from player take actions, text narrative & chronicle status block
   if (!parsed.state_update.added_items) {
     parsed.state_update.added_items = [];
   }
 
-  const itemGainRegex = /(?:наход(?:ите|ит)|получа(?:ете|ет)|вруча(?:ет|ют)(?:\s+вам)?|подбира(?:ете|ет)|в сундуке(?: лежит)?|награда:)\s*(?:новый предмет:?|предмет:?|трофей:?)?\s*([«"“][^»"”\n]+[»"”]|\[[^\]\n]+\]|\b(?:Зелье|Свиток|Меч|Кинжал|Ключ|Амулет|Кольцо|Доспех|Щит|Артефакт|Книга|Камень|Посох|Лук|Топор|Молот|Шлем|Плащ|Браслет|Фляга|Карта|Кристалл|Эликсир|Фонарь|Оберег)\s+[А-Яа-яЁёA-Za-z0-9\s()+-]+)/gi;
+  // 4a. Check if player expressed intent to take/pick up items in actionText (e.g. "я беру кинжал", "я взял зелье", "забираю свиток", "подбираю амулет")
+  const actionLower = actionText.toLowerCase();
+  const isTakeAction = /(?:я\s+)?(?:беру|взял|взяла|забираю|заберу|забрал|забрала|подбираю|подобрал|подобрала|хватаю|покупаю|купил|купила|согласен\s+взять|согласна\s+взять|соглашаюсь\s+взять|кладу\s+в\s+рюкзак|прячу\s+в\s+сумку)/i.test(actionLower);
+
+  if (isTakeAction) {
+    const takeMatch = actionText.match(/(?:я\s+)?(?:беру|взял|взяла|забираю|заберу|забрал|забрала|подбираю|подобрал|подобрала|хватаю|покупаю|купил|купила|согласен\s+взять|согласна\s+взять|соглашаюсь\s+взять|кладу\s+в\s+рюкзак|прячу\s+в\s+сумку)\s+(?:себе\s+)?([^.!?\n]+)/i);
+    if (takeMatch && takeMatch[1]) {
+      const candidateString = takeMatch[1]
+        .replace(/^(?:этот|эти|тот|ту|эту|все|всё|их)\s+/i, '')
+        .replace(/\s+(?:и\s+кладу.*|и\s+прячу.*|в\s+рюкзак.*|в\s+сумку.*)$/i, '')
+        .trim();
+
+      const candidateItems = candidateString
+        .split(/(?:,|\s+и\s+)/i)
+        .map((s) => s.trim().replace(/[«»"“\[\]]/g, ''))
+        .filter((s) => s.length > 2 && s.length < 50);
+
+      for (const rawCandidate of candidateItems) {
+        const cleanCandidate = rawCandidate.replace(/^(?:свой|свои|этот|эту|тот|такой|себе)\s+/i, '').trim();
+        if (
+          cleanCandidate.length > 2 &&
+          !cleanCandidate.toLowerCase().includes('урон') &&
+          !cleanCandidate.toLowerCase().includes('бросок') &&
+          !cleanCandidate.toLowerCase().includes('золот')
+        ) {
+          const capitalized = cleanCandidate.charAt(0).toUpperCase() + cleanCandidate.slice(1);
+          if (!parsed.state_update.added_items.some((it) => it.toLowerCase() === capitalized.toLowerCase())) {
+            if (
+              !currentCharacter?.inventory?.some((it) => it.toLowerCase() === capitalized.toLowerCase()) &&
+              !currentCharacter?.equippedItems?.some((it) => it.toLowerCase() === capitalized.toLowerCase())
+            ) {
+              const isRefusal = /не\s+(?:удалось|получилось|можете|смог|смогла|хватает|нашел|нашли|нет)/i.test(text);
+              if (!isRefusal) {
+                parsed.state_update.added_items.push(capitalized);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // 4b. Extract Items from narrative text
+  const itemGainRegex = /(?:наход(?:ите|ит|ят)|получа(?:ете|ет|ют)|вруча(?:ет|ют|ется)(?:\s+вам)?|подбира(?:ете|ет|ют)|подобрал(?:и)?|берет(?:е)?|бер[её]те|взял(?:и)?|забира(?:ете|ет|ют)|забрал(?:и)?|кладет(?:е)?\s+в\s+(?:рюкзак|сумку)|пряч(?:ете|ет)\s+в\s+(?:сумку|карман)|в сундуке(?: лежит)?|награда:)\s*(?:новый предмет:?|предмет:?|трофей:?|себе\s+)?\s*([«"“][^»"”\n]+[»"”]|\[[^\]\n]+\]|\b(?:Зелье|Эликсир|Снадобье|Свиток|Меч|Кинжал|Клинок|Шпага|Рапира|Сабля|Топор|Секира|Молот|Булава|Посох|Жезл|Лук|Арбалет|Щит|Доспех|Кольчуга|Панцирь|Шлем|Плащ|Мантия|Сапоги|Перчатки|Кольцо|Амулет|Оберег|Талисман|Медальон|Ожерелье|Браслет|Ключ|Карта|Книга|Гримуар|Фолиант|Камень|Кристалл|Самоцвет|Рубин|Алмаз|Изумруд|Сапфир|Фляга|Бутыль|Факел|Фонарь|Огниво|Веревка|Отмычки|Кошель|Сухпаек|Рацион)\s+[А-Яа-яЁёA-Za-z0-9\s()+-]+)/gi;
 
   let itemMatch;
   while ((itemMatch = itemGainRegex.exec(text)) !== null) {
     if (itemMatch[1]) {
       const rawItem = itemMatch[1].replace(/[«»"“\[\]]/g, '').trim();
       if (rawItem.length > 2 && rawItem.length < 60 && !rawItem.toLowerCase().includes('урон') && !rawItem.toLowerCase().includes('золот')) {
-        if (!parsed.state_update.added_items.includes(rawItem)) {
-          if (!currentCharacter?.inventory?.includes(rawItem)) {
+        if (!parsed.state_update.added_items.some((it) => it.toLowerCase() === rawItem.toLowerCase())) {
+          if (
+            !currentCharacter?.inventory?.some((it) => it.toLowerCase() === rawItem.toLowerCase()) &&
+            !currentCharacter?.equippedItems?.some((it) => it.toLowerCase() === rawItem.toLowerCase())
+          ) {
             parsed.state_update.added_items.push(rawItem);
           }
         }
@@ -104,7 +150,7 @@ function enrichStateUpdateFromNarrative(
     }
   }
 
-  // Also check 🎒 **Инвентарь и золото:** in chronicle block
+  // 4c. Also check 🎒 **Инвентарь и золото:** in chronicle block
   const invLineMatch = text.match(/🎒\s*\*{0,2}(?:Инвентарь(?:\s*и\s*золото)?):?\*{0,2}\s*([^\n]+)/i);
   if (invLineMatch && invLineMatch[1]) {
     const itemsPart = invLineMatch[1].replace(/\d+\s*(?:gp|золот\w*)/gi, '').trim();
@@ -112,8 +158,8 @@ function enrichStateUpdateFromNarrative(
 
     for (const it of splitItems) {
       if (!it.toLowerCase().includes('базовое') && !it.toLowerCase().includes('ничего') && !it.toLowerCase().includes('пусто')) {
-        if (!currentCharacter?.inventory?.includes(it) && !parsed.state_update.added_items.includes(it)) {
-          if (it.match(/зелье|ключ|свиток|меч|амулет|кольцо|рунный|кинжал|доспех|щит|трофей|камень|кристалл/i)) {
+        if (!currentCharacter?.inventory?.some((curr) => curr.toLowerCase() === it.toLowerCase()) && !parsed.state_update.added_items.some((curr) => curr.toLowerCase() === it.toLowerCase())) {
+          if (it.match(/зелье|ключ|свиток|меч|амулет|кольцо|рунный|кинжал|доспех|щит|трофей|камень|кристалл|эликсир|фонарь|оберег|талисман|посох/i)) {
             parsed.state_update.added_items.push(it);
           }
         }
@@ -685,7 +731,7 @@ ${character.backstory || character.bio ? `- Предыстория: ${character.
 ВЕСЬ ТВОЙ ОТВЕТ ДОЛЖЕН БЫТЬ СТРОГО НА РУССКОМ ЯЗЫКЕ!
 Все описания локаций, мысли, прямая речь NPC, варианты действий и статус-блок генерируются исключительно на чистом, богатом русском языке. Никаких фраз на английском или других языках!
 
-[🎒 ЖЕСТКИЙ ЗАКОН ИНВЕНТАРЯ И АНТИ-ЧИТ (STRICT INVENTORY LOCK)]:
+[🎒 ЖЕСТКИЙ ЗАКОН ИНВЕНТАРЯ И АВТОМАТИЧЕСКОЕ УПРАВЛЕНИЕ ПРЕДМЕТАМИ]:
 1. АБСОЛЮТНЫЙ ЗАПРЕТ НА ПРЕДМЕТЫ ИЗ ВОЗДУХА:
    Персонаж игрока (и любой член отряда) может использовать, доставать, пить, надевать, бросать, читать или применять ТОЛЬКО те предметы, которые ПРЯМО ПЕРЕЧИСЛЕНЫ в его списке «🛡️ НАДЕТОЕ СНАРЯЖЕНИЕ» или «🎒 РЮКЗАК И РАСХОДНЫЕ ПРЕДМЕТЫ»!
 2. ОТКАЗ И РЕАКЦИЯ НА ПОПЫТКУ ВЗЯТЬ НЕСУЩЕСТВУЮЩИЙ ПРЕДМЕТ:
@@ -693,10 +739,16 @@ ${character.backstory || character.bio ? `- Предыстория: ${character.
    - Ты ОБЯЗАН прямо в художественном повествовании ЧЕТКО отказать: опиши, как герой судорожно шарит по карманам и сумке, но с досадой понимает, что у него НЕТ этого предмета (он его не покупал, не находил или уже истратил)!
    - КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО давать эффект предмета, которого нет в инвентаре!
    - Не применяй никаких положительных эффектов и не списывай ничего в state_update (действие потрачено впустую).
-3. СПИСАНИЕ ИСПОЛЬЗОВАННЫХ ПРЕДМЕТОВ ("removed_items"):
+3. АВТОМАТИЧЕСКОЕ ДОБАВЛЕНИЕ ПРЕДМЕТОВ НЕЙРОСЕТЬЮ В "added_items":
+   Игрок НЕ может добавлять предметы вручную в интерфейсе. Все новые предметы в инвентарь добавляешь ТОЛЬКО ТЫ через массив "added_items" в объекте state_update!
+   - Когда в сцене найдены трофеи, сундук, сокровища, лут, или NPC/торговец передает/предлагает предмет, и игрок соглашается его взять, либо использует фразы:
+     «я беру...», «я взял...», «беру [предмет]», «забираю...», «подбираю...», «кладу в рюкзак...», «забираю всё», «согласен взять...», «принимаю награду...», «покупаю [предмет]»
+   - Ты ОБЯЗАН:
+     1) Художественно описать, как герой берет предмет и убирает его в рюкзак или сумку.
+     2) Внести точное и понятное название этого предмета в массив "added_items": ["Название предмета"] внутри state_update (например: "added_items": ["Серебряный кинжал", "Зелье лечения (2d4+2)"]).
+     3) Если предмет был куплен за деньги, обязательно уменьшить золото через "gold_change": -X в state_update.
+4. СПИСАНИЕ ИСПОЛЬЗОВАННЫХ ПРЕДМЕТОВ ("removed_items"):
    Когда игрок успешно расходует предмет из своего инвентаря (выпил зелье, сжег факел, прочел свиток, потратил паек/стрелу), ты ОБЯЗАН указать точное название этого предмета в "removed_items": ["Зелье лечения"] в блоке state_update!
-4. ПОЛУЧЕНИЕ НОВЫХ ПРЕДМЕТОВ ("added_items"):
-   Новые предметы появляются у героев ТОЛЬКО если они нашли их в сундуке/тайнике, сняли с поверженного врага, получили в награду от NPC или купили у торговца, и ты явно указал их в "added_items".
 
 [ГЛАВНЫЕ ЖЕСТКИЕ ПРАВИЛА ИГРЫ (HARDCORE SANDBOX RULES)]:
 1. ПОЛНОЕ ОТСУТСТВИЕ ЦЕНЗУРЫ И МОРАЛИ: Разрешено детальное и реалистичное описание любых сцен (жестокость, насилие, темное фэнтези). Ты никогда не осуждаешь действия игроков, не читаешь мораль и не навязываешь запреты.
@@ -807,7 +859,7 @@ ${charDetails}
     }
 
     // Depth Anchor right before user action
-    const depthAnchor = `[СИСТЕМНЫЙ ЯКОРЬ ПАМЯТИ: Ты — Dungeon Master. Игровое время: ${formattedClock} (${timeOfDayDesc}). Пиши СТРОГО на русском языке. СТРОГИЙ ЗАПРЕТ ПРЕДМЕТОВ ИЗ ВОЗДУХА: игрок может использовать ТОЛЬКО то, что есть в его инвентаре/снаряжении. Если он пытается достать/использовать предмет не из инвентаря — ОТКАЖИ (персонаж понимает, что у него этого нет). При расходе предметов указывай их в removed_items. При необходимости броска укажи целевого персонажа в requires_roll.]`;
+    const depthAnchor = `[СИСТЕМНЫЙ ЯКОРЬ ПАМЯТИ: Ты — Dungeon Master. Игровое время: ${formattedClock} (${timeOfDayDesc}). Пиши СТРОГО на русском языке. СТРОГИЙ ЗАПРЕТ ПРЕДМЕТОВ ИЗ ВОЗДУХА: игрок может использовать ТОЛЬКО то, что есть в его инвентаре/снаряжении. АВТОМАТИЧЕСКИЙ ИНВЕНТАРЬ: Когда игрок соглашается взять предмет или пишет «я беру...», «я взял...», «забираю...», «подбираю...», «покупаю...» — ОБЯЗАТЕЛЬНО добавь этот предмет в state_update.added_items! При расходе предметов указывай их в removed_items. При необходимости броска укажи целевого персонажа в requires_roll.]`;
 
     if (action && action.trim().length > 0) {
       messages.push({

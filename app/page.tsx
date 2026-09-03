@@ -39,17 +39,17 @@ const DEFAULT_LOREBOOK_ENTRIES: LorebookEntry[] = [
   },
   {
     id: 'lb_inventory_memory',
-    title: 'Строгий инвентарь и запрет читов',
-    keys: ['инвентарь', 'артефакт', 'зелье', 'свиток', 'золото', 'оружие', 'доспех', 'снаряжение', 'лут', 'предмет', 'рюкзак', 'достаю', 'вынимаю', 'пью', 'надеваю', 'зажигаю'],
-    content: '[СТРОГИЙ ЗАКОН ИНВЕНТАРЯ И АНТИ-ЧИТ]: Игрок и союзники могут использовать ТОЛЬКО предметы, которые прямо есть в их рюкзаке или надеты. Если игрок пытается достать или использовать предмет, которого нет в рюкзаке (зелье, веревку, свиток, факел, оружие) — Dungeon Master ОБЯЗАН отказать и описать, что герой шарит по карманам, но предмета там нет!',
+    title: 'Строгий инвентарь и управление предметами Мастером',
+    keys: ['инвентарь', 'артефакт', 'зелье', 'свиток', 'золото', 'оружие', 'доспех', 'снаряжение', 'лут', 'предмет', 'рюкзак', 'достаю', 'вынимаю', 'пью', 'надеваю', 'зажигаю', 'беру', 'взял', 'забираю', 'подбираю', 'покупаю'],
+    content: '[СТРОГИЙ ЗАКОН ИНВЕНТАРЯ И АВТОМАТИЧЕСКОЕ ДОБАВЛЕНИЕ]: Игрок не может создавать предметы вручную. Новые предметы добавляет только Dungeon Master в added_items при согласии игрока или словах «я беру...», «я взял...», «забираю...», «подбираю...». Использовать можно ТОЛЬКО имеющиеся в инвентаре предметы. Попытки достать несуществующее немедленно пресекаются!',
     enabled: true,
     constant: true,
     category: 'item',
   },
 ];
-import { CHARACTER_PRESETS, normalizeRationItem } from '@/lib/dndRules';
+import { CHARACTER_PRESETS, normalizeRationItem, addItemToInventory, removeItemFromInventory } from '@/lib/dndRules';
 import { parseAndAdvanceTime, formatInGameClock } from '@/lib/timeUtils';
-import { executeDirectDmTurn } from '@/lib/directAiClient';
+import { executeDirectDmTurn, isStandaloneMobile } from '@/lib/directAiClient';
 import {
   saveSessionState,
   loadSessionState,
@@ -87,6 +87,8 @@ import {
   setStoredLmStudioApiKey,
   isGpuSaverEnabled,
   setGpuSaverEnabled,
+  getStoredWorldSettings,
+  setStoredWorldSettings,
 } from '@/lib/storage';
 import { playEdgeTts } from '@/lib/edgeTts';
 import {
@@ -98,6 +100,7 @@ import {
   playDamageSound,
   playHealSound,
   playCoinSound,
+  playItemGainSound,
 } from '@/lib/diceSound';
 import { Header } from '@/components/Header';
 import { CharacterSheetView } from '@/components/CharacterSheetView';
@@ -249,7 +252,23 @@ export default function DnDApp() {
       .catch(() => {});
 
     setUseOpenRouter(getStoredUseOpenRouter());
+
+    // Synchronize world settings from persistent storage
+    const savedWorld = getStoredWorldSettings();
+    if (savedWorld && (savedWorld.customSetting || savedWorld.customTone || savedWorld.customRules)) {
+      setWorld((prev) => ({
+        ...prev,
+        customSetting: savedWorld.customSetting || prev.customSetting,
+        customTone: savedWorld.customTone || prev.customTone,
+        customRules: savedWorld.customRules || prev.customRules,
+      }));
+    }
   }, []);
+
+  const handleSaveWorld = (newWorld: WorldSettings) => {
+    setWorld(newWorld);
+    setStoredWorldSettings(newWorld);
+  };
 
   // Global PC Keyboard Shortcuts (Esc to close, Alt+D for Dice, Alt+J for Journal, Alt+S for Settings, Alt+M for LAN)
   useEffect(() => {
@@ -379,7 +398,7 @@ export default function DnDApp() {
 
       let data: DmResponse & { providerUsed?: string };
 
-      const isMobileStandalone = typeof window !== 'undefined' && (Boolean((window as any).Capacitor) || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
+      const isMobileStandalone = isStandaloneMobile();
 
       if (isMobileStandalone && !state.isMultiplayerConnected) {
         // Standalone Direct Client Cloud AI (Google Gemini / OpenRouter) on Mobile
@@ -404,6 +423,10 @@ export default function DnDApp() {
           useGemini: state.useGemini,
           geminiApiKey: state.geminiApiKey && state.geminiApiKey.trim().length > 5 ? state.geminiApiKey.trim() : undefined,
           geminiModel: state.geminiModel,
+          useLmStudio: state.useLmStudio,
+          lmStudioUrl: state.lmStudioUrl || undefined,
+          lmStudioModel: state.lmStudioModel || undefined,
+          lmStudioApiKey: state.lmStudioApiKey || undefined,
         });
       } else {
         try {
@@ -438,8 +461,9 @@ export default function DnDApp() {
             }),
           });
 
-          if (!res.ok) {
-            const errorJson = await res.json().catch(() => null);
+          const contentType = res.headers.get('content-type') || '';
+          if (!res.ok || contentType.includes('text/html')) {
+            const errorJson = !contentType.includes('text/html') ? await res.json().catch(() => null) : null;
             throw new Error(errorJson?.error || `Сервер API вернул статус ${res.status}`);
           }
 
@@ -876,20 +900,23 @@ export default function DnDApp() {
       (update.added_items && update.added_items.length > 0) ||
       (update.removed_items && update.removed_items.length > 0)
     ) {
+      if (update.added_items && update.added_items.length > 0) {
+        playItemGainSound();
+      }
       setCharacter((prev) => {
         if (!prev) return prev;
         let updatedInv = [...(prev.inventory || [])];
         let updatedEquipped = [...(prev.equippedItems || [])];
 
         if (update.removed_items && update.removed_items.length > 0) {
-          updatedInv = updatedInv.filter((item) => !update.removed_items.includes(item));
-          updatedEquipped = updatedEquipped.filter((item) => !update.removed_items.includes(item));
+          for (const it of update.removed_items) {
+            updatedInv = removeItemFromInventory(updatedInv, it);
+            updatedEquipped = removeItemFromInventory(updatedEquipped, it);
+          }
         }
         if (update.added_items && update.added_items.length > 0) {
           for (const it of update.added_items) {
-            if (!updatedInv.includes(it) && !updatedEquipped.includes(it)) {
-              updatedInv.push(it);
-            }
+            updatedInv = addItemToInventory(updatedInv, it);
           }
         }
         return { ...prev, inventory: updatedInv, equippedItems: updatedEquipped };
@@ -976,6 +1003,7 @@ export default function DnDApp() {
   const handleStartCampaign = async (newCharacter: CharacterSheet, newWorld: WorldSettings) => {
     setCharacter(newCharacter);
     setWorld(newWorld);
+    setStoredWorldSettings(newWorld);
     setHistory([]);
     setCurrentLocation('Начало пути');
     setLocationsVisited(['Начало пути']);
@@ -993,10 +1021,10 @@ export default function DnDApp() {
       : 'Начни кампанию. Опиши завязку истории, где находится персонаж, и создай интригующую первую ситуацию.';
 
     try {
-      const res = await fetch('/api/dm', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      let data: DmResponse & { providerUsed?: string };
+
+      if (isStandaloneMobile() && !isMultiplayerConnected) {
+        data = await executeDirectDmTurn({
           world: newWorld,
           character: newCharacter,
           history: [],
@@ -1012,6 +1040,7 @@ export default function DnDApp() {
           modelName: modelName,
           baseUrl: baseUrl || undefined,
           customPrompt: customPrompt || undefined,
+          useOpenRouter: useOpenRouter,
           useGemini: useGemini,
           geminiApiKey: geminiApiKey && geminiApiKey.trim().length > 5 ? geminiApiKey.trim() : undefined,
           geminiModel: geminiModel,
@@ -1019,15 +1048,75 @@ export default function DnDApp() {
           lmStudioUrl: lmStudioUrl || undefined,
           lmStudioModel: lmStudioModel || undefined,
           lmStudioApiKey: lmStudioApiKey || undefined,
-        }),
-      });
+        });
+      } else {
+        try {
+          const res = await fetch('/api/dm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              world: newWorld,
+              character: newCharacter,
+              history: [],
+              action: initialAction,
+              partyCompanions: [],
+              journalEntries: [],
+              lorebookEntries: lorebookEntries,
+              storySummary: '',
+              inGameDay: 1,
+              inGameMinutes: 8 * 60,
+              inGameTime: startInGameTime,
+              apiKey: apiKey && apiKey.trim().length > 10 ? apiKey.trim() : undefined,
+              modelName: modelName,
+              baseUrl: baseUrl || undefined,
+              customPrompt: customPrompt || undefined,
+              useOpenRouter: useOpenRouter,
+              useGemini: useGemini,
+              geminiApiKey: geminiApiKey && geminiApiKey.trim().length > 5 ? geminiApiKey.trim() : undefined,
+              geminiModel: geminiModel,
+              useLmStudio: useLmStudio,
+              lmStudioUrl: lmStudioUrl || undefined,
+              lmStudioModel: lmStudioModel || undefined,
+              lmStudioApiKey: lmStudioApiKey || undefined,
+            }),
+          });
 
-      if (!res.ok) {
-        const errorJson = await res.json().catch(() => null);
-        throw new Error(errorJson?.error || `Сервер API вернул статус ${res.status}`);
+          const contentType = res.headers.get('content-type') || '';
+          if (!res.ok || contentType.includes('text/html')) {
+            const errorJson = !contentType.includes('text/html') ? await res.json().catch(() => null) : null;
+            throw new Error(errorJson?.error || `Сервер API вернул статус ${res.status}`);
+          }
+
+          data = await res.json();
+        } catch (serverErr: any) {
+          console.warn('API /api/dm start game request failed, executing direct client AI fallback:', serverErr?.message);
+          data = await executeDirectDmTurn({
+            world: newWorld,
+            character: newCharacter,
+            history: [],
+            action: initialAction,
+            partyCompanions: [],
+            journalEntries: [],
+            lorebookEntries: lorebookEntries,
+            storySummary: '',
+            inGameDay: 1,
+            inGameMinutes: 8 * 60,
+            inGameTime: startInGameTime,
+            apiKey: apiKey && apiKey.trim().length > 10 ? apiKey.trim() : undefined,
+            modelName: modelName,
+            baseUrl: baseUrl || undefined,
+            customPrompt: customPrompt || undefined,
+            useOpenRouter: useOpenRouter,
+            useGemini: useGemini,
+            geminiApiKey: geminiApiKey && geminiApiKey.trim().length > 5 ? geminiApiKey.trim() : undefined,
+            geminiModel: geminiModel,
+            useLmStudio: useLmStudio,
+            lmStudioUrl: lmStudioUrl || undefined,
+            lmStudioModel: lmStudioModel || undefined,
+            lmStudioApiKey: lmStudioApiKey || undefined,
+          });
+        }
       }
-
-      const data: DmResponse & { providerUsed?: string } = await res.json();
       if (!data || !data.narrative) {
         throw new Error('Нейросеть не вернула повествование.');
       }
@@ -1381,7 +1470,7 @@ export default function DnDApp() {
   };
 
   return (
-    <div className="h-screen max-h-screen overflow-hidden bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-amber-500/30 selection:text-amber-200">
+    <div className="h-full h-[100dvh] max-h-[100dvh] overflow-hidden bg-transparent text-slate-100 flex flex-col font-sans selection:bg-amber-500/30 selection:text-amber-200">
       {/* Top App Header */}
       <Header
         character={character}
@@ -1409,26 +1498,28 @@ export default function DnDApp() {
 
       {/* LAN Multiplayer Party Roster Panel */}
       {isMultiplayerConnected && networkPlayers.length > 0 && (
-        <PartyRosterPanel
-          players={networkPlayers}
-          pendingRoll={pendingRoll}
-          roundActions={roundActions}
-          isHost={isHost}
-          isDmThinking={loading}
-          currentLocalPlayerId={localPlayerId}
-          onForceDmTurn={() => {
-            if (isHost) {
-              lanSocket.send({ type: 'FORCE_DM_TURN' });
-              executeMultiplayerPartyRound(roundActions);
-            }
-          }}
-          onOpenMultiplayerModal={() => setIsLanModalOpen(true)}
-        />
+        <div className="flex-shrink-0">
+          <PartyRosterPanel
+            players={networkPlayers}
+            pendingRoll={pendingRoll}
+            roundActions={roundActions}
+            isHost={isHost}
+            isDmThinking={loading}
+            currentLocalPlayerId={localPlayerId}
+            onForceDmTurn={() => {
+              if (isHost) {
+                lanSocket.send({ type: 'FORCE_DM_TURN' });
+                executeMultiplayerPartyRound(roundActions);
+              }
+            }}
+            onOpenMultiplayerModal={() => setIsLanModalOpen(true)}
+          />
+        </div>
       )}
 
       {/* Main Gameplay Screen */}
       {isGameStarted && character ? (
-        <div className="flex-1 flex flex-col md:flex-row overflow-hidden min-h-0 relative pb-16 md:pb-0 h-[calc(100vh-61px)]">
+        <div className="flex-1 min-h-0 flex flex-col md:flex-row overflow-hidden relative">
           {/* Left Column: Character Sheet (Resizable on Desktop, Fullscreen on Mobile) */}
           <aside
             style={{
@@ -1438,7 +1529,7 @@ export default function DnDApp() {
             }}
             className={`${
               mobileTab === 'character' ? 'flex flex-1 w-full' : 'hidden md:flex'
-            } flex-shrink-0 z-10 h-full min-h-0 overflow-y-auto border-r border-slate-800/80 bg-slate-950 shadow-2xl md:shadow-none relative`}
+            } flex-shrink-0 z-10 h-full min-h-0 overflow-y-auto border-r border-slate-800/80 bg-slate-950/95 backdrop-blur-sm shadow-2xl md:shadow-none relative`}
           >
             <CharacterSheetView
               character={character}
@@ -1477,10 +1568,31 @@ export default function DnDApp() {
           <main
             className={`${
               mobileTab === 'story' ? 'flex flex-1' : 'hidden md:flex'
-            } flex-col justify-between overflow-hidden bg-slate-950 relative w-full h-full min-h-0`}
+            } flex-col justify-between overflow-hidden relative w-full h-full min-h-0`}
           >
+            {/* Dungeon Stone & Centered Mystic Rune Circle Background (Img 1) */}
+            <div className="absolute inset-0 pointer-events-none overflow-hidden select-none z-0 flex items-center justify-center">
+              {/* Dark masonry texture */}
+              <div
+                className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-95"
+                style={{ backgroundImage: "url('/dungeon_stone_bg.jpg')" }}
+              />
+              {/* Vignette atmosphere for contrast & depth */}
+              <div className="absolute inset-0 bg-gradient-to-b from-slate-950/75 via-transparent to-slate-950/85 pointer-events-none" />
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_25%,rgba(2,6,23,0.65)_100%)] pointer-events-none" />
+
+              {/* Faint blue mystical glowing rune circle centered behind text blocks */}
+              <div className="relative w-[520px] h-[520px] sm:w-[640px] sm:h-[640px] lg:w-[740px] lg:h-[740px] max-w-[85vw] max-h-[85vh] flex items-center justify-center pointer-events-none">
+                <img
+                  src="/magic_rune_circle.jpg"
+                  alt="Магический круг с рунами"
+                  className="w-full h-full object-contain mix-blend-screen opacity-50 filter drop-shadow-[0_0_30px_rgba(56,189,248,0.4)] animate-rune-glow pointer-events-none"
+                />
+              </div>
+            </div>
+
             {/* Chat Feed (Only this scrollable area scrolls with story text!) */}
-            <div className="flex-1 min-h-0 flex flex-col justify-between overflow-hidden">
+            <div className="flex-1 min-h-0 flex flex-col justify-between overflow-hidden relative z-10">
               <ChatFeed
                 history={history}
                 loading={loading}
@@ -1491,7 +1603,7 @@ export default function DnDApp() {
             </div>
 
             {/* Bottom Action Section (Pinned to bottom) */}
-            <div className="flex-shrink-0 p-3 sm:p-5 border-t border-slate-800/80 bg-slate-950/98 z-10 shadow-lg">
+            <div className="flex-shrink-0 p-2 sm:p-4 border-t border-slate-800/80 bg-slate-950/98 z-10 shadow-lg">
               {pendingRoll && pendingRoll.needed ? (
                 (() => {
                   const isLocalTarget =
@@ -1585,98 +1697,118 @@ export default function DnDApp() {
               )}
             </div>
           </main>
-
-          {/* Mobile Bottom Navigation Bar (Fixed for smartphones with safe-area padding) */}
-          <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-slate-950/95 backdrop-blur-md border-t border-slate-800/90 pb-safe pt-1.5 px-2 flex items-center justify-around shadow-2xl">
-            <button
-              onClick={() => setMobileTab('story')}
-              className={`flex-1 py-1.5 px-1 rounded-xl flex flex-col items-center gap-0.5 transition cursor-pointer active:scale-95 touch-manipulation ${
-                mobileTab === 'story'
-                  ? 'text-amber-400 font-bold bg-amber-500/15 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <div className="relative">
-                <ScrollText className="w-4 h-4" />
-                {pendingRoll && pendingRoll.needed && (
-                  <span className="absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full shadow-[0_0_6px_rgba(239,68,68,0.8)] animate-pulse" />
-                )}
-              </div>
-              <span className="text-[10px] font-medium">Сюжет</span>
-            </button>
-
-            <button
-              onClick={() => setMobileTab('character')}
-              className={`flex-1 py-1.5 px-1 rounded-xl flex flex-col items-center gap-0.5 transition cursor-pointer active:scale-95 touch-manipulation ${
-                mobileTab === 'character'
-                  ? 'text-amber-400 font-bold bg-amber-500/15 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Shield className="w-4 h-4" />
-              <span className="text-[10px] font-medium">Герой</span>
-            </button>
-
-            <button
-              onClick={() => setIsJournalOpen(true)}
-              className="flex-1 py-1.5 px-1 rounded-xl flex flex-col items-center gap-0.5 text-slate-400 hover:text-purple-300 transition cursor-pointer active:scale-95 touch-manipulation"
-            >
-              <div className="relative">
-                <Users className="w-4 h-4 text-purple-400" />
-                {(partyCompanions.length > 0 || networkPlayers.length > 1) && (
-                  <span className="absolute -top-1 -right-1.5 px-1 py-0.2 text-[8px] bg-purple-600 text-white rounded-full font-bold shadow-sm">
-                    {networkPlayers.length > 1 ? networkPlayers.length : partyCompanions.length}
-                  </span>
-                )}
-              </div>
-              <span className="text-[10px] font-medium">Отряд</span>
-            </button>
-
-            <button
-              onClick={() => setIsDiceRollerOpen(true)}
-              className="flex-1 py-1.5 px-1 rounded-xl flex flex-col items-center gap-0.5 text-slate-400 hover:text-amber-300 transition cursor-pointer active:scale-95 touch-manipulation"
-            >
-              <Dices className="w-4 h-4 text-amber-400" />
-              <span className="text-[10px] font-medium">Дайсы</span>
-            </button>
-
-            <button
-              onClick={() => setIsSettingsOpen(true)}
-              className="flex-1 py-1.5 px-1 rounded-xl flex flex-col items-center gap-0.5 text-slate-400 hover:text-amber-300 transition cursor-pointer active:scale-95 touch-manipulation"
-            >
-              <Settings className="w-4 h-4 text-slate-300" />
-              <span className="text-[10px] font-medium">Опции</span>
-            </button>
-          </nav>
         </div>
       ) : (
         /* Empty / Welcome State if modal closed before starting */
-        <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
-          <div className="w-16 h-16 rounded-3xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-400 mb-4 shadow-xl">
-            <Sparkles className="w-8 h-8" />
+        <div className="flex-1 flex flex-col items-center justify-center p-6 text-center relative overflow-hidden">
+          {/* Centered Dungeon Stone & Mystic Rune Circle Background */}
+          <div className="absolute inset-0 pointer-events-none overflow-hidden select-none z-0 flex items-center justify-center">
+            <div
+              className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-95"
+              style={{ backgroundImage: "url('/dungeon_stone_bg.jpg')" }}
+            />
+            <div className="absolute inset-0 bg-gradient-to-b from-slate-950/80 via-slate-950/40 to-slate-950/90 pointer-events-none" />
+            <div className="relative w-[500px] h-[500px] sm:w-[620px] sm:h-[620px] max-w-[85vw] max-h-[85vh] flex items-center justify-center pointer-events-none">
+              <img
+                src="/magic_rune_circle.jpg"
+                alt=""
+                className="w-full h-full object-contain mix-blend-screen opacity-50 filter drop-shadow-[0_0_30px_rgba(56,189,248,0.4)] animate-rune-glow pointer-events-none"
+              />
+            </div>
           </div>
-          <h2 className="font-cinzel text-2xl font-bold text-amber-300 mb-2">
-            Готовы к новому приключению?
-          </h2>
-          <p className="text-sm text-slate-400 max-w-md mb-6">
-            Выберите готового персонажа или создайте собственного героя и погрузитесь в соло-кампанию или LAN мультиплеер с искусственным интеллектом в роли Dungeon Master.
-          </p>
-          <div className="flex flex-wrap items-center justify-center gap-3">
-            <button
-              onClick={() => setIsCreatorOpen(true)}
-              className="px-8 py-3.5 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 font-cinzel font-bold text-sm rounded-xl shadow-lg shadow-amber-600/30 transition cursor-pointer"
-            >
-              Создать персонажа и начать
-            </button>
-            <button
-              onClick={() => setIsLanModalOpen(true)}
-              className="px-6 py-3.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 font-semibold text-sm rounded-xl shadow-lg transition cursor-pointer flex items-center gap-2"
-            >
-              <Radio className="w-4 h-4 text-amber-400" />
-              <span>Мультиплеер LAN</span>
-            </button>
+
+          <div className="relative z-10 flex flex-col items-center justify-center">
+            <div className="w-16 h-16 rounded-3xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-400 mb-4 shadow-xl">
+              <Sparkles className="w-8 h-8" />
+            </div>
+            <h2 className="font-cinzel text-2xl font-bold text-amber-300 mb-2">
+              Готовы к новому приключению?
+            </h2>
+            <p className="text-sm text-slate-400 max-w-md mb-6">
+              Выберите готового персонажа или создайте собственного героя и погрузитесь в соло-кампанию или LAN мультиплеер с искусственным интеллектом в роли Dungeon Master.
+            </p>
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <button
+                onClick={() => setIsCreatorOpen(true)}
+                className="px-8 py-3.5 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 font-cinzel font-bold text-sm rounded-xl shadow-lg shadow-amber-600/30 transition cursor-pointer"
+              >
+                Создать персонажа и начать
+              </button>
+              <button
+                onClick={() => setIsLanModalOpen(true)}
+                className="px-6 py-3.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 font-semibold text-sm rounded-xl shadow-lg transition cursor-pointer flex items-center gap-2"
+              >
+                <Radio className="w-4 h-4 text-amber-400" />
+                <span>Мультиплеер LAN</span>
+              </button>
+            </div>
           </div>
         </div>
+      )}
+
+      {/* Mobile Bottom Navigation Bar (In flex flow at bottom of viewport, never overlapping chat input) */}
+      {isGameStarted && character && (
+        <nav className="md:hidden flex-shrink-0 z-40 bg-slate-950/95 backdrop-blur-md border-t border-slate-800/90 pb-safe pt-1 px-2 flex items-center justify-around shadow-2xl">
+          <button
+            onClick={() => setMobileTab('story')}
+            className={`flex-1 py-1 px-1 rounded-xl flex flex-col items-center gap-0.5 transition cursor-pointer active:scale-95 touch-manipulation ${
+              mobileTab === 'story'
+                ? 'text-amber-400 font-bold bg-amber-500/15 shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <div className="relative">
+              <ScrollText className="w-4 h-4" />
+              {pendingRoll && pendingRoll.needed && (
+                <span className="absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full shadow-[0_0_6px_rgba(239,68,68,0.8)] animate-pulse" />
+              )}
+            </div>
+            <span className="text-[10px] font-medium">Сюжет</span>
+          </button>
+
+          <button
+            onClick={() => setMobileTab('character')}
+            className={`flex-1 py-1 px-1 rounded-xl flex flex-col items-center gap-0.5 transition cursor-pointer active:scale-95 touch-manipulation ${
+              mobileTab === 'character'
+                ? 'text-amber-400 font-bold bg-amber-500/15 shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Shield className="w-4 h-4" />
+            <span className="text-[10px] font-medium">Герой</span>
+          </button>
+
+          <button
+            onClick={() => setIsJournalOpen(true)}
+            className="flex-1 py-1 px-1 rounded-xl flex flex-col items-center gap-0.5 text-slate-400 hover:text-purple-300 transition cursor-pointer active:scale-95 touch-manipulation"
+          >
+            <div className="relative">
+              <Users className="w-4 h-4 text-purple-400" />
+              {(partyCompanions.length > 0 || networkPlayers.length > 1) && (
+                <span className="absolute -top-1 -right-1.5 px-1 py-0.2 text-[8px] bg-purple-600 text-white rounded-full font-bold shadow-sm">
+                  {networkPlayers.length > 1 ? networkPlayers.length : partyCompanions.length}
+                </span>
+              )}
+            </div>
+            <span className="text-[10px] font-medium">Отряд</span>
+          </button>
+
+          <button
+            onClick={() => setIsDiceRollerOpen(true)}
+            className="flex-1 py-1 px-1 rounded-xl flex flex-col items-center gap-0.5 text-slate-400 hover:text-amber-300 transition cursor-pointer active:scale-95 touch-manipulation"
+          >
+            <Dices className="w-4 h-4 text-amber-400" />
+            <span className="text-[10px] font-medium">Дайсы</span>
+          </button>
+
+          <button
+            onClick={() => setIsSettingsOpen(true)}
+            className="flex-1 py-1 px-1 rounded-xl flex flex-col items-center gap-0.5 text-slate-400 hover:text-amber-300 transition cursor-pointer active:scale-95 touch-manipulation"
+          >
+            <Settings className="w-4 h-4 text-slate-300" />
+            <span className="text-[10px] font-medium">Опции</span>
+          </button>
+        </nav>
       )}
 
       {/* Modals */}
@@ -1698,6 +1830,7 @@ export default function DnDApp() {
         isOpen={isCreatorOpen}
         onClose={() => setIsCreatorOpen(false)}
         onStartCampaign={handleStartCampaign}
+        initialWorld={world}
       />
 
       <DiceRollerModal
@@ -1734,7 +1867,7 @@ export default function DnDApp() {
         lmStudioApiKey={lmStudioApiKey}
         onSaveLmStudioApiKey={handleSaveLmStudioApiKey}
         world={world}
-        onSaveWorld={setWorld}
+        onSaveWorld={handleSaveWorld}
         soundEnabled={soundActive}
         onToggleSound={handleToggleSound}
         onExportSave={handleExportSave}

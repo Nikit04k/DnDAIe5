@@ -269,3 +269,33 @@ export function playCoinSound() {
     osc.stop(coinTime + 0.25);
   }
 }
+
+/**
+ * Play sparkling item pickup / loot discovery chime
+ */
+export function playItemGainSound() {
+  if (!isSoundEnabled()) return;
+  const ctx = getAudioContext();
+  if (!ctx) return;
+
+  const now = ctx.currentTime;
+  const notes = [587.33, 880, 1174.66, 1760]; // D5, A5, D6, A6 sparkle
+
+  notes.forEach((freq, idx) => {
+    const noteTime = now + (idx * 0.06);
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(freq, noteTime);
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.16, noteTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, noteTime + 0.45);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(noteTime);
+    osc.stop(noteTime + 0.45);
+  });
+}
+

@@ -62,6 +62,7 @@ interface CharacterCreatorModalProps {
   isOpen: boolean;
   onClose?: () => void;
   onStartCampaign: (character: CharacterSheet, world: WorldSettings) => void;
+  initialWorld?: WorldSettings;
 }
 
 type StatGenerationMode = 'point_buy' | 'standard_array';
@@ -70,6 +71,7 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
   isOpen,
   onClose,
   onStartCampaign,
+  initialWorld,
 }) => {
   // Navigation section
   const [activeSection, setActiveSection] = useState<'lore' | 'world' | 'stats'>('lore');
@@ -85,11 +87,20 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
   const [personalityTraits, setPersonalityTraits] = useState('');
   const [appearance, setAppearance] = useState('');
 
-  // 2. Worldbuilding & Setting
-  const [customSetting, setCustomSetting] = useState('');
-  const [customTone, setCustomTone] = useState('');
-  const [customRules, setCustomRules] = useState('');
-  const [startingScene, setStartingScene] = useState('');
+  // 2. Worldbuilding & Setting (Synchronized with Settings)
+  const [customSetting, setCustomSetting] = useState(initialWorld?.customSetting || '');
+  const [customTone, setCustomTone] = useState(initialWorld?.customTone || '');
+  const [customRules, setCustomRules] = useState(initialWorld?.customRules || '');
+  const [startingScene, setStartingScene] = useState(initialWorld?.startingScene || '');
+
+  // Synchronize world parameters when modal opens
+  useEffect(() => {
+    if (isOpen && initialWorld) {
+      if (initialWorld.customSetting) setCustomSetting(initialWorld.customSetting);
+      if (initialWorld.customTone) setCustomTone(initialWorld.customTone);
+      if (initialWorld.customRules) setCustomRules(initialWorld.customRules);
+    }
+  }, [isOpen, initialWorld]);
 
   // 3. Stat Generation Mode (Point Buy or Standard Array only)
   const [statMode, setStatMode] = useState<StatGenerationMode>('point_buy');

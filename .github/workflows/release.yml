@@ -104,18 +104,18 @@ jobs:
           draft: false
           prerelease: false
           body: |
-            # ⚔️ DnDAIe5 — AI Dungeon Master & Party RPG
+            # ⚔️ DnDAIe5 — AI Dungeon Master & Party RPG (${{ github.ref_name }})
 
             ## 📦 Скачать установщики:
-            - **Windows Setup (Инсталлятор NSIS):** `DnDAIe5-Setup-1.0.0.exe`
-            - **Windows Portable (Портативная версия):** `DnDAIe5-Portable-1.0.0.exe`
+            - **Windows Setup (Инсталлятор NSIS):** `DnDAIe5-Setup-1.0.1.exe`
+            - **Windows Portable (Портативная версия):** `DnDAIe5-Portable-1.0.1.exe`
             - **Android (Установочный APK):** `DnDAIe5-Mobile.apk`
 
-            ### 🌟 Особенности:
-            - Полноценная локальная и облачная поддержка нейросетей (LM Studio, Gemini API, OpenRouter).
-            - LAN мультиплеер для совместных D&D сессий с друзьями по Wi-Fi.
-            - Озвучка Dungeon Master через Edge TTS.
-            - Античит с жесткой привязкой к инвентарю персонажа.
+            ### 🌟 Что нового в версии ${{ github.ref_name }}:
+            - 📱 **Мобильный интерфейс**: Название `DnDAIe5` скрыто на смартфонах для гарантированного отображения кнопки звука и защиты от сжатия элементов панели.
+            - 🎙️ **Синтез речи (TTS)**: Прямой движок Microsoft Edge Neural через Node.js (без зависимости от Python), отказоустойчивые мульти-зеркала Google Stream с таймаутами и авто-фоллбеком на офлайн Web Speech API.
+            - 🌍 **Мироустройство**: Полная синхронизация параметров сеттинга, тональности и правил между созданием мира и настройками. Стартовая сцена вынесена исключительно в создание персонажа.
+            - 👥 **LAN Мультиплеер**: Совместная игра по локальной сети с синхронизацией ходов и лора.
           files: |
             dist/*.exe
             dist/*.apk

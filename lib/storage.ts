@@ -13,7 +13,10 @@ const STORAGE_KEYS = {
   TTS_AUTO_PLAY: 'dnd_tts_auto_play',
   TTS_SPEED: 'dnd_tts_speed',
   TTS_VOLUME: 'dnd_tts_volume',
+  TTS_PROVIDER: 'dnd_tts_provider',
+  TTS_BROWSER_VOICE: 'dnd_tts_browser_voice',
   GPU_SAVER: 'dnd_gpu_saver_enabled',
+  WORLD_SETTINGS: 'dnd_world_settings',
 };
 
 export function saveSessionState(state: Partial<GameSessionState>): void {
@@ -109,7 +112,11 @@ export function setStoredCustomPrompt(prompt: string): void {
 
 export function getStoredTtsVoice(): string {
   if (typeof window === 'undefined') return 'ru-RU-DmitryNeural';
-  return localStorage.getItem(STORAGE_KEYS.TTS_VOICE) || 'ru-RU-DmitryNeural';
+  const v = localStorage.getItem(STORAGE_KEYS.TTS_VOICE);
+  if (!v || v.startsWith('en') || v === 'en-US-ChristopherNeural' || v === 'en-US-JennyNeural') {
+    return 'ru-RU-DmitryNeural';
+  }
+  return v;
 }
 
 export function setStoredTtsVoice(voice: string): void {
@@ -148,6 +155,30 @@ export function getStoredTtsVolume(): number {
 export function setStoredTtsVolume(volume: number): void {
   if (typeof window === 'undefined') return;
   localStorage.setItem(STORAGE_KEYS.TTS_VOLUME, volume.toString());
+}
+
+export type TtsProvider = 'edge' | 'google' | 'browser';
+
+export function getStoredTtsProvider(): TtsProvider {
+  if (typeof window === 'undefined') return 'edge';
+  const val = localStorage.getItem(STORAGE_KEYS.TTS_PROVIDER);
+  if (val === 'google' || val === 'browser') return val;
+  return 'edge';
+}
+
+export function setStoredTtsProvider(provider: TtsProvider): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(STORAGE_KEYS.TTS_PROVIDER, provider);
+}
+
+export function getStoredTtsBrowserVoice(): string {
+  if (typeof window === 'undefined') return '';
+  return localStorage.getItem(STORAGE_KEYS.TTS_BROWSER_VOICE) || '';
+}
+
+export function setStoredTtsBrowserVoice(voiceUri: string): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(STORAGE_KEYS.TTS_BROWSER_VOICE, voiceUri);
 }
 
 /**
@@ -373,5 +404,46 @@ export function setGpuSaverEnabled(enabled: boolean): void {
   try {
     localStorage.setItem(STORAGE_KEYS.GPU_SAVER, enabled ? 'true' : 'false');
   } catch {}
+}
+
+// ================= WORLD SETTINGS (SETTING, TONE, RULES) =================
+
+export function getStoredWorldSettings(): WorldSettings {
+  const defaultWorld: WorldSettings = {
+    customSetting: '',
+    customTone: '',
+    customRules: '',
+    startingScene: '',
+  };
+  if (typeof window === 'undefined') return defaultWorld;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.WORLD_SETTINGS);
+    if (!raw) {
+      const session = loadSessionState();
+      if (session?.world) return session.world;
+      return defaultWorld;
+    }
+    const parsed = JSON.parse(raw);
+    return {
+      customSetting: parsed.customSetting || '',
+      customTone: parsed.customTone || '',
+      customRules: parsed.customRules || '',
+      startingScene: parsed.startingScene || '',
+      difficulty: parsed.difficulty || 'standard',
+      selectedPresetId: parsed.selectedPresetId || '',
+    };
+  } catch {
+    return defaultWorld;
+  }
+}
+
+export function setStoredWorldSettings(world: WorldSettings): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(STORAGE_KEYS.WORLD_SETTINGS, JSON.stringify(world));
+    saveSessionState({ world });
+  } catch (err) {
+    console.error('Failed to save world settings:', err);
+  }
 }
 

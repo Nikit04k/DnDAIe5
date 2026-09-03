@@ -15,6 +15,8 @@ import {
   SKILL_RUSSIAN_NAMES,
   ABILITY_FULL_NAMES,
   normalizeRationItem,
+  parseItemQuantity,
+  formatItemWithCount,
 } from '@/lib/dndRules';
 import {
   Heart,
@@ -29,7 +31,6 @@ import {
   Scroll,
   Edit3,
   Check,
-  Plus,
   Trash2,
   Sword,
   Shirt,
@@ -125,10 +126,6 @@ export const CharacterSheetView: React.FC<CharacterSheetProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'vitals' | 'skills' | 'equipment' | 'lore'>('vitals');
   const [isEditingLore, setIsEditingLore] = useState(false);
-  const [newBackpackItem, setNewBackpackItem] = useState('');
-  const [showAddBackpack, setShowAddBackpack] = useState(false);
-  const [newEquippedItem, setNewEquippedItem] = useState('');
-  const [showAddEquipped, setShowAddEquipped] = useState(false);
   const [usedItemNotice, setUsedItemNotice] = useState<string | null>(null);
 
   const equippedList = character.equippedItems || [];
@@ -161,42 +158,52 @@ export const CharacterSheetView: React.FC<CharacterSheetProps> = ({
     });
   };
 
-  // Use / Consume item (potions, scrolls, food, rations, torches, etc.)
+  // Use / Consume item (potions, scrolls, food, rations, torches, candles, holy water, etc.)
   const handleUseItem = (itemToUse: string, index: number) => {
-    const normalized = normalizeRationItem(itemToUse);
-    const lower = normalized.toLowerCase();
+    const parsed = parseItemQuantity(itemToUse);
+    const baseName = parsed.baseName;
+    const currentCount = parsed.count;
+    const lower = baseName.toLowerCase();
+
     let healAmount = 0;
-    let effectMessage = `Игрок применил: ${normalized}`;
-    let nextItemState: string | null = null; // null means consume and remove; string means replace with decremented piece count
+    let effectMessage = `Игрок применил: ${baseName}`;
+    const remainingCount = currentCount > 1 ? currentCount - 1 : 0;
+    const nextItemState = currentCount > 1 ? formatItemWithCount(baseName, remainingCount) : null;
 
     if (lower.includes('зелье лечения') || lower.includes('лечения') || lower.includes('исцелени') || lower.includes('аптечка')) {
       // Roll 2d4 + 2
       const d1 = Math.floor(Math.random() * 4) + 1;
       const d2 = Math.floor(Math.random() * 4) + 1;
       healAmount = d1 + d2 + 2;
-      effectMessage = `Выпито зелье лечения: ${normalized} (+${healAmount} HP)`;
+      effectMessage = remainingCount > 0
+        ? `Выпито 1 зелье лечения: ${baseName} (+${healAmount} HP, осталось: ${remainingCount} шт.)`
+        : `Выпито зелье лечения: ${baseName} (+${healAmount} HP)`;
       playHealSound();
     } else if (lower.includes('рацион') || lower.includes('сухпаек') || lower.includes('еда')) {
       healAmount = 2;
-      // 1 штука = 1 день пропитания
-      const countMatch = normalized.match(/(?:сухпаек|сухой па[её]к|рацион).*?\((\d+)\s*шт\.?\)/i);
-      if (countMatch) {
-        const count = parseInt(countMatch[1], 10);
-        if (count > 1) {
-          const remaining = count - 1;
-          nextItemState = `Сухпаек (${remaining} шт.)`;
-          effectMessage = `Съеден сухпаек (1 шт. на 1 день, осталось: ${remaining} шт.) (+2 HP)`;
-        } else {
-          nextItemState = null;
-          effectMessage = `Съеден последний сухпаек (1 шт. на 1 день) (+2 HP)`;
-        }
-      } else {
-        nextItemState = null;
-        effectMessage = `Съеден сухпаек (1 шт. на 1 день) (+2 HP)`;
-      }
+      effectMessage = remainingCount > 0
+        ? `Съеден сухпаек (1 шт. на 1 день, осталось: ${remainingCount} шт.) (+2 HP)`
+        : `Съеден последний сухпаек (1 шт. на 1 день) (+2 HP)`;
       playHealSound();
+    } else if (lower.includes('факел')) {
+      effectMessage = remainingCount > 0
+        ? `Зажжен 1 факел (освещает 20 фт. на 1 час, осталось: ${remainingCount} шт.)`
+        : `Зажжен последний факел (освещает 20 фт. на 1 час)`;
+      playDiceRollSound();
+    } else if (lower.includes('свеч')) {
+      effectMessage = remainingCount > 0
+        ? `Зажжена 1 свеча (осталось: ${remainingCount} шт.)`
+        : `Зажжена свеча`;
+      playDiceRollSound();
+    } else if (lower.includes('святая вода')) {
+      effectMessage = remainingCount > 0
+        ? `Использован 1 флакон святой воды (осталось: ${remainingCount} шт.)`
+        : `Использован флакон святой воды`;
+      playDiceRollSound();
     } else {
-      effectMessage = `Использован предмет: ${normalized}`;
+      effectMessage = remainingCount > 0
+        ? `Использовано: ${baseName} (1 шт., осталось: ${remainingCount} шт.)`
+        : `Использован предмет: ${baseName}`;
       playDiceRollSound();
     }
 
@@ -221,9 +228,10 @@ export const CharacterSheetView: React.FC<CharacterSheetProps> = ({
     setUsedItemNotice(effectMessage);
     setTimeout(() => setUsedItemNotice(null), 4000);
 
-    // Notify DM & Chat so neural network sees and reacts to item usage
+    // Notify DM & Chat so neural network sees and reacts to item usage of 1 piece
     if (onItemUsed) {
-      onItemUsed(normalized, effectMessage);
+      const singleItemNarrative = currentCount > 1 ? `${baseName} (1 шт.)` : baseName;
+      onItemUsed(singleItemNarrative, effectMessage);
     }
   };
 
@@ -247,37 +255,6 @@ export const CharacterSheetView: React.FC<CharacterSheetProps> = ({
         equippedItems: currentEquipped.filter((_, i) => i !== index),
       };
     });
-  };
-
-  // Add custom backpack item
-  const handleAddBackpackItem = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newBackpackItem.trim()) return;
-    const normalized = normalizeRationItem(newBackpackItem.trim());
-    onUpdateCharacter((prev) => {
-      const currentInv = (prev.inventory || []).map(normalizeRationItem);
-      return {
-        ...prev,
-        inventory: [...currentInv, normalized],
-      };
-    });
-    setNewBackpackItem('');
-    setShowAddBackpack(false);
-  };
-
-  // Add custom equipped item
-  const handleAddEquippedItem = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newEquippedItem.trim()) return;
-    onUpdateCharacter((prev) => {
-      const currentEquipped = prev.equippedItems || [];
-      return {
-        ...prev,
-        equippedItems: [...currentEquipped, newEquippedItem.trim()],
-      };
-    });
-    setNewEquippedItem('');
-    setShowAddEquipped(false);
   };
 
   // Short Rest Trigger (narrated by DM)
@@ -531,50 +508,33 @@ export const CharacterSheetView: React.FC<CharacterSheetProps> = ({
                   <span className="text-[10px] uppercase font-bold text-slate-400">
                     Предметы в сумке ({backpackList.length}):
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => setShowAddBackpack(!showAddBackpack)}
-                    className="text-[10px] text-amber-400 hover:text-amber-300 flex items-center gap-0.5 transition cursor-pointer"
-                  >
-                    <Plus className="w-3 h-3" />
-                    <span>{showAddBackpack ? 'Скрыть' : 'Добавить'}</span>
-                  </button>
+                  <span className="text-[10px] text-slate-500 italic">
+                    Пополняется Мастером по сюжету
+                  </span>
                 </div>
 
-                {showAddBackpack && (
-                  <form onSubmit={handleAddBackpackItem} className="flex gap-1 pt-1">
-                    <input
-                      type="text"
-                      placeholder="Название предмета..."
-                      value={newBackpackItem}
-                      onChange={(e) => setNewBackpackItem(e.target.value)}
-                      className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-slate-100 focus:outline-none focus:border-amber-500"
-                    />
-                    <button
-                      type="submit"
-                      className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-lg transition cursor-pointer"
-                    >
-                      +
-                    </button>
-                  </form>
-                )}
-
                 {backpackList.length === 0 ? (
-                  <p className="text-[11px] text-slate-500 italic p-2 bg-slate-950/60 rounded-lg text-center border border-slate-800/80">
-                    Рюкзак пуст. Найденные в приключении трофеи и зелья попадают сюда.
+                  <p className="text-[11px] text-slate-500 italic p-2.5 bg-slate-950/60 rounded-lg text-center border border-slate-800/80">
+                    Рюкзак пуст. Найденные трофеи, награды и зелья добавляются Мастером при согласии или словах «я беру».
                   </p>
                 ) : (
                   <div className="space-y-1 max-h-56 overflow-y-auto pr-0.5">
                     {backpackList.map((item, idx) => {
                       const consumable = isConsumableItem(item);
+                      const parsed = parseItemQuantity(item);
                       return (
                         <div
                           key={idx}
                           className="flex items-center justify-between p-2 rounded-lg bg-slate-950/80 border border-slate-800/90 text-xs hover:border-slate-700 transition"
                         >
-                          <div className="flex items-center gap-2 text-slate-200 text-[11px] font-medium truncate pr-1">
+                          <div className="flex items-center gap-2 text-slate-200 text-[11px] font-medium truncate pr-1 min-w-0">
                             {getItemSlotIcon(item)}
-                            <span className="truncate">{item}</span>
+                            <span className="truncate">{parsed.baseName}</span>
+                            {parsed.count > 1 && (
+                              <span className="text-[10px] font-bold text-amber-300 bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 rounded-md font-mono shrink-0">
+                                ×{parsed.count}
+                              </span>
+                            )}
                           </div>
 
                           <div className="flex items-center gap-1 flex-shrink-0">
@@ -583,7 +543,7 @@ export const CharacterSheetView: React.FC<CharacterSheetProps> = ({
                                 type="button"
                                 onClick={() => handleUseItem(item, idx)}
                                 className="px-2 py-0.5 rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold transition flex items-center gap-0.5 cursor-pointer shadow-sm"
-                                title="Применить / выпить этот предмет"
+                                title="Применить 1 шт."
                               >
                                 <FlaskConical className="w-2.5 h-2.5" />
                                 <span>Применить</span>
@@ -685,7 +645,7 @@ export const CharacterSheetView: React.FC<CharacterSheetProps> = ({
         {/* TAB 3: EQUIPPED GEAR (НАДЕТОЕ СНАРЯЖЕНИЕ) */}
         {activeTab === 'equipment' && (
           <div className="space-y-4">
-            {/* Header & Quick Action */}
+            {/* Header */}
             <div className="bg-slate-900/90 rounded-xl p-3.5 border border-slate-800 space-y-2.5 shadow-sm">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -699,33 +659,10 @@ export const CharacterSheetView: React.FC<CharacterSheetProps> = ({
                     </span>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setShowAddEquipped(!showAddEquipped)}
-                  className="px-2.5 py-1 text-[11px] font-semibold text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 rounded-lg transition flex items-center gap-1 cursor-pointer"
-                >
-                  <Plus className="w-3 h-3" />
-                  <span>Надеть новое</span>
-                </button>
+                <div className="text-[10px] font-mono font-bold text-amber-300 bg-amber-500/10 px-2.5 py-1 rounded-lg border border-amber-500/30 shadow-sm">
+                  AC: {character.ac}
+                </div>
               </div>
-
-              {showAddEquipped && (
-                <form onSubmit={handleAddEquippedItem} className="flex gap-1 pt-1">
-                  <input
-                    type="text"
-                    placeholder="Например: Длинный меч, Кольчуга..."
-                    value={newEquippedItem}
-                    onChange={(e) => setNewEquippedItem(e.target.value)}
-                    className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-slate-100 focus:outline-none focus:border-amber-500"
-                  />
-                  <button
-                    type="submit"
-                    className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-lg transition cursor-pointer"
-                  >
-                    + Надеть
-                  </button>
-                </form>
-              )}
             </div>
 
             {/* Equipped Items List */}
@@ -748,17 +685,24 @@ export const CharacterSheetView: React.FC<CharacterSheetProps> = ({
                 </div>
               ) : (
                 <div className="space-y-1.5">
-                  {equippedList.map((item, idx) => (
-                    <div
-                      key={idx}
-                      className="flex items-center justify-between p-3 rounded-xl bg-slate-900/95 border border-slate-800 hover:border-amber-500/30 text-xs shadow-sm transition"
-                    >
-                      <div className="flex items-center gap-2.5 text-slate-100 font-semibold truncate pr-2">
-                        <div className="p-1.5 rounded-lg bg-slate-950 border border-slate-800">
-                          {getItemSlotIcon(item)}
+                  {equippedList.map((item, idx) => {
+                    const parsed = parseItemQuantity(item);
+                    return (
+                      <div
+                        key={idx}
+                        className="flex items-center justify-between p-3 rounded-xl bg-slate-900/95 border border-slate-800 hover:border-amber-500/30 text-xs shadow-sm transition"
+                      >
+                        <div className="flex items-center gap-2.5 text-slate-100 font-semibold truncate pr-2 min-w-0">
+                          <div className="p-1.5 rounded-lg bg-slate-950 border border-slate-800 shrink-0">
+                            {getItemSlotIcon(item)}
+                          </div>
+                          <span className="truncate">{parsed.baseName}</span>
+                          {parsed.count > 1 && (
+                            <span className="text-[10px] font-bold text-amber-300 bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 rounded-md font-mono shrink-0">
+                              ×{parsed.count}
+                            </span>
+                          )}
                         </div>
-                        <span className="truncate">{item}</span>
-                      </div>
 
                       <div className="flex items-center gap-1.5 flex-shrink-0">
                         <button
@@ -779,8 +723,9 @@ export const CharacterSheetView: React.FC<CharacterSheetProps> = ({
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
-                    </div>
-                  ))}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>

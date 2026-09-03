@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { WorldSettings } from '@/types/dnd';
 import {
   X,
@@ -40,6 +40,11 @@ import {
   setStoredTtsSpeed,
   getStoredTtsVolume,
   setStoredTtsVolume,
+  getStoredTtsProvider,
+  setStoredTtsProvider,
+  getStoredTtsBrowserVoice,
+  setStoredTtsBrowserVoice,
+  TtsProvider,
   getStoredGeminiApiKey,
   setStoredGeminiApiKey,
   isGeminiApiActive,
@@ -61,7 +66,13 @@ import {
   getStoredUseOpenRouter,
   setStoredUseOpenRouter,
 } from '@/lib/storage';
-import { playEdgeTts, stopTtsAudio } from '@/lib/edgeTts';
+import { playEdgeTts, stopTtsAudio, testVoiceSynthesis, playSpeechSynthesisFallback } from '@/lib/edgeTts';
+import {
+  testDirectAiConnection,
+  testDirectGeminiConnection,
+  testDirectLmStudioConnection,
+  isStandaloneMobile,
+} from '@/lib/directAiClient';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -229,16 +240,59 @@ const PROMPT_PRESETS = [
   },
 ];
 
-const TTS_VOICES = [
+export interface OpenTtsProvider {
+  id: TtsProvider;
+  name: string;
+  badge: string;
+  desc: string;
+  icon: string;
+}
+
+const OPEN_TTS_PROVIDERS: OpenTtsProvider[] = [
+  {
+    id: 'edge',
+    name: 'Microsoft Edge Neural',
+    badge: 'Нейросеть (Бесплатно)',
+    desc: 'Высочайшее качество речи, глубокий мужской голос DM и выразительный женский голос без ключей.',
+    icon: '🌐',
+  },
+  {
+    id: 'google',
+    name: 'Google Speech Stream',
+    badge: 'Быстрый поток (Бесплатно)',
+    desc: 'Мгновенный отклик, открытый стрим синтеза без ограничений и ключей.',
+    icon: '⚡',
+  },
+  {
+    id: 'browser',
+    name: 'Web Speech API (Офлайн)',
+    badge: '100% Офлайн',
+    desc: 'Встроенный в операционную систему синтезатор. Работает полностью локально без интернета.',
+    icon: '💻',
+  },
+];
+
+const EDGE_TTS_VOICES = [
   {
     id: 'ru-RU-DmitryNeural',
     name: '👨‍🎤 Дмитрий (Dmitry Neural)',
     desc: 'Глубокий мужской голос — Dungeon Master',
+    lang: 'RU',
   },
   {
     id: 'ru-RU-SvetlanaNeural',
     name: '👩‍🎤 Светлана (Svetlana Neural)',
     desc: 'Эмоциональный женский голос рассказчицы',
+    lang: 'RU',
+  },
+];
+
+const GOOGLE_TTS_VOICES = [
+  {
+    id: 'ru',
+    name: '🇷🇺 Русский (Google Stream)',
+    desc: 'Открытый быстрый синтез русской речи Google',
+    lang: 'RU',
   },
 ];
 
@@ -321,14 +375,68 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [tempSetting, setTempSetting] = useState(world.customSetting || '');
   const [tempTone, setTempTone] = useState(world.customTone || '');
   const [tempRules, setTempRules] = useState(world.customRules || '');
-  const [tempStartingScene, setTempStartingScene] = useState(world.startingScene || '');
   const [savedSuccess, setSavedSuccess] = useState(false);
 
-  const [tempVoice, setTempVoice] = useState(getStoredTtsVoice());
+  // Synchronize with latest world settings whenever modal opens or world changes
+  useEffect(() => {
+    if (isOpen) {
+      setTempSetting(world.customSetting || '');
+      setTempTone(world.customTone || '');
+      setTempRules(world.customRules || '');
+    }
+  }, [isOpen, world]);
+
+  const [tempTtsProvider, setTempTtsProvider] = useState<TtsProvider>(getStoredTtsProvider());
+  const [tempTtsBrowserVoice, setTempTtsBrowserVoice] = useState(getStoredTtsBrowserVoice());
+  const [browserVoicesList, setBrowserVoicesList] = useState<SpeechSynthesisVoice[]>([]);
+  const [tempVoice, setTempVoice] = useState(() => {
+    const v = getStoredTtsVoice();
+    return v.startsWith('en') ? 'ru-RU-DmitryNeural' : v;
+  });
   const [tempAutoTts, setTempAutoTts] = useState(isAutoTtsEnabled());
   const [tempTtsSpeed, setTempTtsSpeed] = useState(getStoredTtsSpeed());
   const [tempTtsVolume, setTempTtsVolume] = useState(getStoredTtsVolume());
   const [isTestingVoice, setIsTestingVoice] = useState(false);
+
+  // TTS Diagnostic Connection Test State
+  const [isTestingTtsConnection, setIsTestingTtsConnection] = useState(false);
+  const [ttsTestResult, setTtsTestResult] = useState<{
+    success: boolean;
+    latencyMs: number;
+    engineUsed?: string;
+    audioBase64?: string;
+    error?: string;
+    sampleText: string;
+    audioSizeBytes?: number;
+  } | null>(null);
+  const [customTtsTestPrompt, setCustomTtsTestPrompt] = useState('Связь с голосовым синтезом успешно установлена! Готов к озвучке приключений.');
+  const [showTtsPromptInput, setShowTtsPromptInput] = useState(false);
+  const [isPlayingTestAudio, setIsPlayingTestAudio] = useState(false);
+
+  // Load OS installed Russian browser voices for offline TTS
+  React.useEffect(() => {
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      const updateVoices = () => {
+        const voices = window.speechSynthesis.getVoices();
+        const ruVoices = voices.filter(
+          (v) =>
+            v.lang.toLowerCase().startsWith('ru') ||
+            v.lang.toLowerCase().includes('rus') ||
+            v.name.toLowerCase().includes('russian') ||
+            v.name.toLowerCase().includes('русский')
+        );
+        setBrowserVoicesList(ruVoices);
+        if (ruVoices.length > 0) {
+          const currentMatches = ruVoices.some((v) => (v.name || v.voiceURI) === tempTtsBrowserVoice);
+          if (!currentMatches) {
+            setTempTtsBrowserVoice(ruVoices[0].name || ruVoices[0].voiceURI);
+          }
+        }
+      };
+      updateVoices();
+      window.speechSynthesis.onvoiceschanged = updateVoices;
+    }
+  }, [tempTtsBrowserVoice]);
 
   // AI Connection Test state
   const [isTestingAi, setIsTestingAi] = useState(false);
@@ -350,7 +458,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setTempSetting('');
     setTempTone('');
     setTempRules('');
-    setTempStartingScene('');
     setTempCustomPrompt('');
   };
 
@@ -363,15 +470,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const handleTestTtsVoice = async () => {
     setIsTestingVoice(true);
-    const sampleText = tempVoice.includes('Dmitry')
-      ? 'Приветствую тебя, путник! Я твой Dungeon Master.'
-      : 'Приветствую в мире приключений!';
+    const sampleText = customTtsTestPrompt || (
+      tempVoice.includes('Dmitry')
+        ? 'Приветствую тебя, путник! Я твой Dungeon Master.'
+        : tempVoice.includes('Svetlana')
+        ? 'Приветствую в мире приключений!'
+        : 'Приветствую в мире настольных ролевых приключений D&D 5e!'
+    );
 
     try {
       await playEdgeTts('test_tts_preview', sampleText, {
+        provider: tempTtsProvider,
         voice: tempVoice,
         rate: tempTtsSpeed,
         volume: tempTtsVolume,
+        browserVoice: tempTtsBrowserVoice,
         onEnd: () => setIsTestingVoice(false),
         onError: () => setIsTestingVoice(false),
       });
@@ -380,10 +493,91 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   };
 
+  const handleTestTtsConnection = async () => {
+    setIsTestingTtsConnection(true);
+    setTtsTestResult(null);
+    try {
+      const res = await testVoiceSynthesis({
+        provider: tempTtsProvider,
+        voice: tempVoice,
+        rate: tempTtsSpeed,
+        browserVoice: tempTtsBrowserVoice,
+        testText: customTtsTestPrompt,
+      });
+      setTtsTestResult(res);
+
+      // Play synthesized audio right away for instant feedback
+      if (res.audioBase64) {
+        setIsPlayingTestAudio(true);
+        const audio = new Audio(res.audioBase64);
+        audio.volume = tempTtsVolume;
+        audio.onended = () => setIsPlayingTestAudio(false);
+        audio.onerror = () => setIsPlayingTestAudio(false);
+        audio.play().catch(() => setIsPlayingTestAudio(false));
+      } else if (tempTtsProvider === 'browser' && res.success) {
+        setIsPlayingTestAudio(true);
+        playSpeechSynthesisFallback('test_tts_check', res.sampleText, {
+          rate: tempTtsSpeed,
+          volume: tempTtsVolume,
+          browserVoice: tempTtsBrowserVoice,
+          onEnd: () => setIsPlayingTestAudio(false),
+          onError: () => setIsPlayingTestAudio(false),
+        });
+      }
+    } catch (err: any) {
+      setTtsTestResult({
+        success: false,
+        latencyMs: 0,
+        error: `Ошибка клиента: ${err?.message || 'Сбой при проверке голосового синтеза'}`,
+        sampleText: customTtsTestPrompt,
+      });
+    } finally {
+      setIsTestingTtsConnection(false);
+    }
+  };
+
+  const handlePlaySavedTestAudio = () => {
+    if (!ttsTestResult) return;
+    if (ttsTestResult.audioBase64) {
+      setIsPlayingTestAudio(true);
+      const audio = new Audio(ttsTestResult.audioBase64);
+      audio.volume = tempTtsVolume;
+      audio.onended = () => setIsPlayingTestAudio(false);
+      audio.onerror = () => setIsPlayingTestAudio(false);
+      audio.play().catch(() => setIsPlayingTestAudio(false));
+    } else if (tempTtsProvider === 'browser') {
+      setIsPlayingTestAudio(true);
+      playSpeechSynthesisFallback('test_tts_check', ttsTestResult.sampleText, {
+        rate: tempTtsSpeed,
+        volume: tempTtsVolume,
+        browserVoice: tempTtsBrowserVoice,
+        onEnd: () => setIsPlayingTestAudio(false),
+        onError: () => setIsPlayingTestAudio(false),
+      });
+    }
+  };
+
   const handleTestLmStudioConnection = async () => {
     setIsTestingLmStudio(true);
     setLmStudioTestResult(null);
     try {
+      if (isStandaloneMobile()) {
+        const directRes = await testDirectLmStudioConnection({
+          url: tempLmStudioUrl,
+          model: tempLmStudioModel,
+          apiKey: tempLmStudioApiKey,
+          testPrompt: customTestPrompt || 'Ответь кратко на русском: Связь с локальной нейросетью через LM Studio успешно установлена!',
+        });
+        setLmStudioTestResult(directRes);
+        if (Array.isArray(directRes.availableModels) && directRes.availableModels.length > 0) {
+          setLmStudioAvailableModels(directRes.availableModels);
+          if (!tempLmStudioModel && directRes.modelUsed) {
+            setTempLmStudioModel(directRes.modelUsed);
+          }
+        }
+        return;
+      }
+
       const res = await fetch('/api/test-lmstudio', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -394,6 +588,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           testPrompt: customTestPrompt || 'Ответь кратко на русском: Связь с локальной нейросетью через LM Studio успешно установлена!',
         }),
       });
+
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('text/html')) {
+        const directRes = await testDirectLmStudioConnection({
+          url: tempLmStudioUrl,
+          model: tempLmStudioModel,
+          apiKey: tempLmStudioApiKey,
+          testPrompt: customTestPrompt || 'Ответь кратко на русском: Связь с локальной нейросетью через LM Studio успешно установлена!',
+        });
+        setLmStudioTestResult(directRes);
+        if (Array.isArray(directRes.availableModels) && directRes.availableModels.length > 0) {
+          setLmStudioAvailableModels(directRes.availableModels);
+          if (!tempLmStudioModel && directRes.modelUsed) {
+            setTempLmStudioModel(directRes.modelUsed);
+          }
+        }
+        return;
+      }
+
       const data = await res.json();
       setLmStudioTestResult(data);
       if (Array.isArray(data.availableModels) && data.availableModels.length > 0) {
@@ -403,11 +616,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         }
       }
     } catch (err: any) {
-      setLmStudioTestResult({
-        success: false,
-        latencyMs: 0,
-        error: `Ошибка клиента: ${err?.message || 'Сбой сети при подключении к LM Studio'}`,
-      });
+      try {
+        const directRes = await testDirectLmStudioConnection({
+          url: tempLmStudioUrl,
+          model: tempLmStudioModel,
+          apiKey: tempLmStudioApiKey,
+          testPrompt: customTestPrompt || 'Ответь кратко на русском: Связь с локальной нейросетью через LM Studio успешно установлена!',
+        });
+        setLmStudioTestResult(directRes);
+        if (Array.isArray(directRes.availableModels) && directRes.availableModels.length > 0) {
+          setLmStudioAvailableModels(directRes.availableModels);
+          if (!tempLmStudioModel && directRes.modelUsed) {
+            setTempLmStudioModel(directRes.modelUsed);
+          }
+        }
+      } catch (fallbackErr: any) {
+        setLmStudioTestResult({
+          success: false,
+          latencyMs: 0,
+          error: `Ошибка клиента: ${fallbackErr?.message || err?.message || 'Сбой сети при подключении к LM Studio'}`,
+        });
+      }
     } finally {
       setIsTestingLmStudio(false);
     }
@@ -416,6 +645,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const handleFetchLmModels = async () => {
     setIsFetchingLmModels(true);
     try {
+      if (isStandaloneMobile()) {
+        const lmBase = (tempLmStudioUrl || 'http://localhost:1234').replace(/\/+$/, '');
+        const headers: Record<string, string> = {};
+        if (tempLmStudioApiKey) headers['Authorization'] = `Bearer ${tempLmStudioApiKey}`;
+        const mRes = await fetch(`${lmBase}/v1/models`, { headers });
+        if (mRes.ok) {
+          const mData = await mRes.json();
+          if (Array.isArray(mData?.data)) {
+            const list = mData.data.map((m: any) => m.id).filter(Boolean);
+            if (list.length > 0) {
+              setLmStudioAvailableModels(list);
+              if (list[0]) setTempLmStudioModel(list[0]);
+            }
+          }
+        }
+        return;
+      }
+
       const res = await fetch('/api/test-lmstudio', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -426,6 +673,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           testPrompt: 'тест',
         }),
       });
+
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('text/html')) {
+        const lmBase = (tempLmStudioUrl || 'http://localhost:1234').replace(/\/+$/, '');
+        const headers: Record<string, string> = {};
+        if (tempLmStudioApiKey) headers['Authorization'] = `Bearer ${tempLmStudioApiKey}`;
+        const mRes = await fetch(`${lmBase}/v1/models`, { headers });
+        if (mRes.ok) {
+          const mData = await mRes.json();
+          if (Array.isArray(mData?.data)) {
+            const list = mData.data.map((m: any) => m.id).filter(Boolean);
+            if (list.length > 0) {
+              setLmStudioAvailableModels(list);
+              if (list[0]) setTempLmStudioModel(list[0]);
+            }
+          }
+        }
+        return;
+      }
+
       const data = await res.json();
       if (Array.isArray(data.availableModels) && data.availableModels.length > 0) {
         setLmStudioAvailableModels(data.availableModels);
@@ -443,6 +710,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setIsTestingGemini(true);
     setGeminiTestResult(null);
     try {
+      if (isStandaloneMobile()) {
+        const directRes = await testDirectGeminiConnection({
+          apiKey: tempGeminiApiKey,
+          model: selectedGeminiModel,
+          testPrompt: customTestPrompt || 'Ответь кратко на русском: Связь с Google Gemini установлена!',
+        });
+        setGeminiTestResult(directRes);
+        if (directRes.success) {
+          const updated = recordGeminiUsage();
+          setGeminiStats(updated);
+        }
+        return;
+      }
+
       const res = await fetch('/api/test-gemini', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -452,6 +733,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           testPrompt: customTestPrompt || 'Ответь кратко на русском: Связь с Google Gemini установлена!',
         }),
       });
+
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('text/html')) {
+        const directRes = await testDirectGeminiConnection({
+          apiKey: tempGeminiApiKey,
+          model: selectedGeminiModel,
+          testPrompt: customTestPrompt || 'Ответь кратко на русском: Связь с Google Gemini установлена!',
+        });
+        setGeminiTestResult(directRes);
+        if (directRes.success) {
+          const updated = recordGeminiUsage();
+          setGeminiStats(updated);
+        }
+        return;
+      }
+
       const data = await res.json();
       setGeminiTestResult(data);
       if (data.success) {
@@ -459,11 +756,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         setGeminiStats(updated);
       }
     } catch (err: any) {
-      setGeminiTestResult({
-        success: false,
-        latencyMs: 0,
-        error: `Ошибка клиента: ${err?.message || 'Сбой сети при подключении к Gemini'}`,
-      });
+      try {
+        const directRes = await testDirectGeminiConnection({
+          apiKey: tempGeminiApiKey,
+          model: selectedGeminiModel,
+          testPrompt: customTestPrompt || 'Ответь кратко на русском: Связь с Google Gemini установлена!',
+        });
+        setGeminiTestResult(directRes);
+        if (directRes.success) {
+          const updated = recordGeminiUsage();
+          setGeminiStats(updated);
+        }
+      } catch (fallbackErr: any) {
+        setGeminiTestResult({
+          success: false,
+          latencyMs: 0,
+          error: `Ошибка клиента: ${fallbackErr?.message || err?.message || 'Сбой сети при подключении к Gemini'}`,
+        });
+      }
     } finally {
       setIsTestingGemini(false);
     }
@@ -473,6 +783,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setIsTestingAi(true);
     setAiTestResult(null);
     try {
+      if (isStandaloneMobile()) {
+        const directRes = await testDirectAiConnection({
+          apiKey: tempApiKey,
+          model: selectedModel,
+          baseUrl: tempBaseUrl,
+          testPrompt: customTestPrompt || 'Ответь кратко на русском: Связь с Мастером Подземелий установлена!',
+        });
+        setAiTestResult(directRes);
+        return;
+      }
+
       const res = await fetch('/api/test-ai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -483,14 +804,37 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           testPrompt: customTestPrompt || 'Ответь кратко на русском: Связь с Мастером Подземелий установлена!',
         }),
       });
+
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('text/html')) {
+        const directRes = await testDirectAiConnection({
+          apiKey: tempApiKey,
+          model: selectedModel,
+          baseUrl: tempBaseUrl,
+          testPrompt: customTestPrompt || 'Ответь кратко на русском: Связь с Мастером Подземелий установлена!',
+        });
+        setAiTestResult(directRes);
+        return;
+      }
+
       const data = await res.json();
       setAiTestResult(data);
     } catch (err: any) {
-      setAiTestResult({
-        success: false,
-        latencyMs: 0,
-        error: `Ошибка клиента: ${err?.message || 'Сбой сети при отправке запроса'}`,
-      });
+      try {
+        const directRes = await testDirectAiConnection({
+          apiKey: tempApiKey,
+          model: selectedModel,
+          baseUrl: tempBaseUrl,
+          testPrompt: customTestPrompt || 'Ответь кратко на русском: Связь с Мастером Подземелий установлена!',
+        });
+        setAiTestResult(directRes);
+      } catch (fallbackErr: any) {
+        setAiTestResult({
+          success: false,
+          latencyMs: 0,
+          error: `Ошибка клиента: ${fallbackErr?.message || err?.message || 'Сбой сети при отправке запроса'}`,
+        });
+      }
     } finally {
       setIsTestingAi(false);
     }
@@ -529,9 +873,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       customSetting: tempSetting,
       customTone: tempTone,
       customRules: tempRules,
-      startingScene: tempStartingScene,
     });
 
+    setStoredTtsProvider(tempTtsProvider);
+    setStoredTtsBrowserVoice(tempTtsBrowserVoice);
     setStoredTtsVoice(tempVoice);
     setAutoTtsEnabled(tempAutoTts);
     setStoredTtsSpeed(tempTtsSpeed);
@@ -581,52 +926,201 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </p>
           </div>
 
-          <div className="bg-gradient-to-r from-purple-950/40 via-slate-900 to-slate-950 border border-purple-500/40 rounded-2xl p-4 space-y-3.5 shadow-lg">
-            <div className="flex items-center justify-between pb-1 border-b border-slate-800">
-              <div className="flex items-center gap-2 text-purple-300 font-bold text-xs uppercase tracking-wider">
-                <Volume2 className="w-4 h-4 text-purple-400" />
-                <span>Озвучка речи (Голосовой синтез)</span>
+          <div className="bg-gradient-to-r from-purple-950/50 via-slate-900 to-indigo-950/50 border border-purple-500/50 rounded-2xl p-4 sm:p-5 space-y-4 shadow-xl">
+            {/* Panel Header */}
+            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-purple-600 to-indigo-500 flex items-center justify-center text-slate-950 font-bold text-xs shadow-md shadow-purple-500/30">
+                  <Volume2 className="w-4 h-4 text-slate-950" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <h4 className="text-xs font-bold text-purple-200 uppercase tracking-wider">
+                      Озвучка речи (Голосовой синтез)
+                    </h4>
+                    <span className="text-[9px] uppercase font-extrabold px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                      Бесплатно
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-400">Открытые синтезаторы речи без API-ключей, авторизации и оплаты</p>
+                </div>
               </div>
-              <span className="text-[10px] uppercase font-extrabold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                Бесплатно
+              <span className="text-[10px] text-purple-400/80 font-mono hidden sm:inline">
+                {tempTtsProvider === 'browser' ? 'Офлайн' : 'Онлайн'}
               </span>
             </div>
 
-            <p className="text-[11px] text-slate-300 leading-relaxed">
-              Нейросетевой русский голос для кинематографичной озвучки Мастера Подземелий:
-            </p>
+            {/* Provider Selection (4 Open Synthesizers) */}
+            <div className="space-y-2">
+              <label className="text-xs uppercase font-bold text-slate-300 flex items-center gap-1.5">
+                <Cpu className="w-3.5 h-3.5 text-purple-400" /> Выбор открытого движка синтеза
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {OPEN_TTS_PROVIDERS.map((p) => {
+                  const isSelected = tempTtsProvider === p.id;
+                  return (
+                    <div
+                      key={p.id}
+                      onClick={() => {
+                        setTempTtsProvider(p.id);
+                        if (p.id === 'google') setTempVoice('ru');
+                        else if (p.id === 'edge' && tempVoice === 'ru') setTempVoice('ru-RU-DmitryNeural');
+                      }}
+                      className={`p-2.5 sm:p-3 rounded-xl border transition cursor-pointer flex flex-col justify-between ${
+                        isSelected
+                          ? 'bg-purple-950/70 border-purple-500 text-purple-200 ring-1 ring-purple-500/60 shadow-md shadow-purple-950/50'
+                          : 'bg-slate-950/70 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm">{p.icon}</span>
+                          <span className="font-bold text-xs text-slate-100">{p.name}</span>
+                        </div>
+                        <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
+                          isSelected
+                            ? 'bg-purple-500/30 text-purple-200 border border-purple-400/40'
+                            : 'bg-slate-800 text-slate-400'
+                        }`}>
+                          {p.badge}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-400 leading-tight">{p.desc}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {TTS_VOICES.map((v) => {
-                const isSelected = tempVoice === v.id;
-                return (
-                  <div
-                    key={v.id}
-                    onClick={() => setTempVoice(v.id)}
-                    className={`p-3 rounded-xl border transition cursor-pointer ${isSelected ? 'bg-purple-950/60 border-purple-500 text-purple-200' : 'bg-slate-950/70 border-slate-800 text-slate-400 hover:text-slate-200'}`}
+            {/* Voice Options per Provider */}
+            {tempTtsProvider === 'edge' && (
+              <div className="space-y-2 pt-1 border-t border-slate-800/80">
+                <label className="text-[11px] text-slate-300 font-bold block">
+                  Голос нейросети Edge Neural:
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {EDGE_TTS_VOICES.map((v) => {
+                    const isSelected = tempVoice === v.id;
+                    return (
+                      <div
+                        key={v.id}
+                        onClick={() => setTempVoice(v.id)}
+                        className={`p-2.5 rounded-xl border transition cursor-pointer ${
+                          isSelected
+                            ? 'bg-purple-950/60 border-purple-500 text-purple-200'
+                            : 'bg-slate-950/70 border-slate-800 text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-0.5">
+                          <span className="font-bold text-xs text-slate-100">{v.name}</span>
+                          <span className="text-[9px] font-mono text-slate-500">{v.lang}</span>
+                        </div>
+                        <p className="text-[10px] text-slate-400">{v.desc}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {tempTtsProvider === 'google' && (
+              <div className="space-y-2 pt-1 border-t border-slate-800/80">
+                <label className="text-[11px] text-slate-300 font-bold block">
+                  Язык синтезатора Google Stream:
+                </label>
+                <div className="grid grid-cols-1 gap-2">
+                  {GOOGLE_TTS_VOICES.map((v) => {
+                    const isSelected = tempVoice === v.id;
+                    return (
+                      <div
+                        key={v.id}
+                        onClick={() => setTempVoice(v.id)}
+                        className={`p-2.5 rounded-xl border transition cursor-pointer ${
+                          isSelected
+                            ? 'bg-purple-950/60 border-purple-500 text-purple-200'
+                            : 'bg-slate-950/70 border-slate-800 text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-0.5">
+                          <span className="font-bold text-xs text-slate-100">{v.name}</span>
+                          <span className="text-[9px] font-mono text-slate-500">{v.lang}</span>
+                        </div>
+                        <p className="text-[10px] text-slate-400">{v.desc}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {tempTtsProvider === 'browser' && (
+              <div className="space-y-2 pt-1 border-t border-slate-800/80">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] text-slate-300 font-bold block">
+                    Русский системный голос устройства (Web Speech API):
+                  </label>
+                  <span className="text-[10px] text-purple-400 font-mono">
+                    Русских голосов: {browserVoicesList.length}
+                  </span>
+                </div>
+                {browserVoicesList.length > 0 ? (
+                  <select
+                    value={tempTtsBrowserVoice}
+                    onChange={(e) => setTempTtsBrowserVoice(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-purple-500"
                   >
-                    <span className="font-bold text-xs text-slate-100 block mb-1">{v.name}</span>
-                    <p className="text-[10px] text-slate-400">{v.desc}</p>
+                    {browserVoicesList.map((v) => (
+                      <option key={v.voiceURI || v.name} value={v.name || v.voiceURI}>
+                        {v.name} ({v.lang}) {v.default ? '★ По умолчанию' : ''}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-400 text-xs">
+                    Русскоязычный голос не обнаружен в операционной системе. Рекомендуется использовать Edge Neural или Google Stream.
                   </div>
-                );
-              })}
-            </div>
+                )}
+                <p className="text-[10px] text-emerald-400/90 leading-tight">
+                  ✓ Этот синтезатор работает полностью автономно даже без интернета (например, в дороге или без связи).
+                </p>
+              </div>
+            )}
 
+            {/* Speed & Quick Preview */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-              <select
-                value={tempTtsSpeed}
-                onChange={(e) => setTempTtsSpeed(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-100"
-              >
-                <option value="+0%">1.0x (Нормальная)</option>
-                <option value="+25%">1.25x (Быстрая)</option>
-              </select>
-              <button type="button" onClick={handleTestTtsVoice} disabled={isTestingVoice} className="w-full py-1.5 px-3 bg-purple-600/30 border border-purple-500/50 text-purple-200 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5">
-                {isTestingVoice ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-                <span>Прослушать</span>
-              </button>
+              <div>
+                <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
+                  Скорость чтения:
+                </label>
+                <select
+                  value={tempTtsSpeed}
+                  onChange={(e) => setTempTtsSpeed(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-100"
+                >
+                  <option value="-20%">0.8x (Медленная, эпичная)</option>
+                  <option value="+0%">1.0x (Нормальная)</option>
+                  <option value="+25%">1.25x (Быстрая)</option>
+                  <option value="+50%">1.5x (Динамичная)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
+                  Быстрое прослушивание:
+                </label>
+                <button
+                  type="button"
+                  onClick={handleTestTtsVoice}
+                  disabled={isTestingVoice}
+                  className="w-full py-1.5 px-3 bg-purple-600/30 hover:bg-purple-600/40 border border-purple-500/50 text-purple-200 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 cursor-pointer transition disabled:opacity-50"
+                >
+                  {isTestingVoice ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                  <span>{isTestingVoice ? 'Синтез...' : 'Прослушать голос'}</span>
+                </button>
+              </div>
             </div>
 
+            {/* Volume Range */}
             <div className="space-y-1.5 pt-1 border-t border-slate-800/80">
               <div className="flex items-center justify-between">
                 <label className="text-[11px] text-slate-300 font-bold flex items-center gap-1.5">
@@ -635,13 +1129,163 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </label>
                 <span className="text-xs font-bold text-purple-300 font-mono">{Math.round(tempTtsVolume * 100)}%</span>
               </div>
-              <input type="range" min="0" max="1" step="0.05" value={tempTtsVolume} onChange={(e) => setTempTtsVolume(parseFloat(e.target.value))} className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500" />
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                value={tempTtsVolume}
+                onChange={(e) => setTempTtsVolume(parseFloat(e.target.value))}
+                className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+              />
             </div>
 
+            {/* ================= TTS CONNECTION TEST PANEL ================= */}
+            <div className="bg-slate-950/85 border border-purple-500/30 rounded-xl p-3.5 space-y-3 shadow-inner">
+              <div className="flex items-center justify-between pb-1 border-b border-slate-800">
+                <div className="flex items-center gap-2 text-purple-300 font-bold text-xs uppercase tracking-wider">
+                  <Zap className="w-4 h-4 text-purple-400" />
+                  <span>Проверка подключения к голосовому синтезу</span>
+                </div>
+                <span className="text-[10px] uppercase font-bold text-slate-400">
+                  Диагностика TTS
+                </span>
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
+                <button
+                  type="button"
+                  onClick={handleTestTtsConnection}
+                  disabled={isTestingTtsConnection}
+                  className="flex-1 py-2 px-3.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-slate-100 font-bold text-xs rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {isTestingTtsConnection ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin text-purple-200" />
+                      <span>Тестирование подключения и синтеза...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Zap className="w-3.5 h-3.5 text-amber-300" />
+                      <span>Проверить соединение с голосовым синтезом</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowTtsPromptInput(!showTtsPromptInput)}
+                  className="py-2 px-3 bg-slate-950 hover:bg-slate-800 border border-slate-700 text-[11px] text-slate-300 rounded-xl transition flex items-center justify-center gap-1 cursor-pointer"
+                  title="Настроить проверочный текст для синтеза"
+                >
+                  <Sliders className="w-3 h-3 text-purple-400" />
+                  <span>{showTtsPromptInput ? 'Скрыть текст' : 'Текст теста'}</span>
+                </button>
+              </div>
+
+              {showTtsPromptInput && (
+                <div className="space-y-1 pt-1">
+                  <label className="text-[10px] text-slate-400 block font-semibold">
+                    Пользовательская проверочная фраза:
+                  </label>
+                  <input
+                    type="text"
+                    value={customTtsTestPrompt}
+                    onChange={(e) => setCustomTtsTestPrompt(e.target.value)}
+                    placeholder="Связь с голосовым синтезом успешно установлена!"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+              )}
+
+              {/* Diagnostic Test Output */}
+              {ttsTestResult && (
+                <div
+                  className={`p-3 rounded-xl border text-xs space-y-2 animate-fadeIn ${
+                    ttsTestResult.success
+                      ? 'bg-emerald-950/40 border-emerald-500/50 text-emerald-200'
+                      : 'bg-red-950/40 border-red-500/50 text-red-200'
+                  }`}
+                >
+                  <div className="flex items-center justify-between font-bold text-[11px]">
+                    <div className="flex items-center gap-1.5">
+                      {ttsTestResult.success ? (
+                        <>
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                          <span className="text-emerald-300">Соединение успешно: голос синтезирован!</span>
+                        </>
+                      ) : (
+                        <>
+                          <AlertTriangle className="w-4 h-4 text-red-400" />
+                          <span className="text-red-300">Ошибка соединения с синтезатором</span>
+                        </>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 font-mono text-[10px]">
+                      {ttsTestResult.latencyMs > 0 && (
+                        <span className="bg-slate-950/80 px-2 py-0.5 rounded border border-slate-700 text-amber-300">
+                          ⚡ {ttsTestResult.latencyMs} мс
+                        </span>
+                      )}
+                      {ttsTestResult.audioSizeBytes ? (
+                        <span className="bg-slate-950/80 px-2 py-0.5 rounded border border-slate-700 text-slate-300">
+                          {Math.round(ttsTestResult.audioSizeBytes / 1024)} КБ
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  {ttsTestResult.success && (
+                    <div className="bg-slate-950/80 border border-emerald-500/30 rounded-lg p-2.5 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] uppercase font-bold text-emerald-400 flex items-center gap-1">
+                          <MessageSquare className="w-3 h-3" /> Движок: {ttsTestResult.engineUsed || tempTtsProvider}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handlePlaySavedTestAudio}
+                          className="px-2.5 py-1 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 rounded-lg text-[11px] font-bold flex items-center gap-1 cursor-pointer transition"
+                        >
+                          <Play className="w-3 h-3 text-emerald-400" />
+                          <span>{isPlayingTestAudio ? 'Воспроизведение...' : 'Воспроизвести'}</span>
+                        </button>
+                      </div>
+                      <p className="text-slate-200 italic leading-relaxed text-[11px]">
+                        «{ttsTestResult.sampleText}»
+                      </p>
+                    </div>
+                  )}
+
+                  {!ttsTestResult.success && ttsTestResult.error && (
+                    <div className="space-y-1.5">
+                      <p className="text-red-300 leading-relaxed text-[11px]">
+                        {ttsTestResult.error}
+                      </p>
+                      <p className="text-slate-400 text-[10px] leading-tight">
+                        💡 Совет: Попробуйте переключиться на <strong>Google Speech Stream</strong> или встроенный <strong>Web Speech API (Офлайн)</strong>.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Auto-TTS Toggle */}
             <div className="flex items-center justify-between pt-2 border-t border-slate-800/80">
-              <span className="text-xs font-bold text-slate-200">Автоозвучка ходов Мастера</span>
-              <button type="button" onClick={() => setTempAutoTts(!tempAutoTts)} className={`px-3 py-1 text-xs font-bold rounded-lg ${tempAutoTts ? 'bg-purple-500/20 text-purple-300' : 'bg-slate-950 text-slate-500'}`}>
-                {tempAutoTts ? 'ВКЛ' : 'ВЫКЛ'}
+              <div>
+                <span className="text-xs font-bold text-slate-200 block">Автоозвучка ходов Мастера</span>
+                <span className="text-[10px] text-slate-400">Автоматически зачитывать новые ответы DM вслух</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTempAutoTts(!tempAutoTts)}
+                className={`px-3 py-1 text-xs font-bold rounded-lg border transition cursor-pointer ${
+                  tempAutoTts
+                    ? 'bg-purple-500/20 text-purple-300 border-purple-500/40 ring-1 ring-purple-500/30'
+                    : 'bg-slate-950 text-slate-500 border-slate-800'
+                }`}
+              >
+                {tempAutoTts ? '✓ ВКЛ' : 'ВЫКЛ'}
               </button>
             </div>
           </div>
@@ -1438,15 +2082,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 placeholder="Особые правила, запреты, законы магии или домашние правила D&D..."
                 value={tempRules}
                 onChange={(e) => setTempRules(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500 min-h-[50px]"
-              />
-            </div>
-            <div>
-              <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">Стартовая сцена / Завязка приключения</label>
-              <textarea
-                placeholder="С какой конкретной сцены или ситуации должна начаться кампания..."
-                value={tempStartingScene}
-                onChange={(e) => setTempStartingScene(e.target.value)}
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500 min-h-[50px]"
               />
             </div>

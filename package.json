@@ -1,6 +1,6 @@
 {
   "name": "dnd-ai-5e",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "scripts": {
     "dev": "node server.js",
@@ -14,7 +14,7 @@
     "dist:win": "npm run build && electron-builder --win --x64",
     "cap:build": "node scripts/buildMobile.js && npx cap sync android",
     "cap:sync": "npx cap sync android",
-    "build:apk": "npm run cap:build && cd android && .\\gradlew.bat assembleDebug",
+    "build:apk": "npm run cap:build && cd android && powershell -Command \"$env:JAVA_HOME = if (Test-Path 'C:\\Program Files\\Java\\jdk-21.0.11') { 'C:\\Program Files\\Java\\jdk-21.0.11' } else { $env:JAVA_HOME }; .\\gradlew.bat assembleDebug\" && node -e \"require('fs').copyFileSync('app/build/outputs/apk/debug/app-debug.apk', '../dist/DnDAIe5-Mobile.apk')\"",
     "lint": "next lint"
   },
   "dependencies": {

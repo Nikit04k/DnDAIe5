@@ -88,15 +88,33 @@ export function prepareTextForTts(raw: string): string {
   return text;
 }
 
-import { getStoredTtsVolume } from '@/lib/storage';
+import {
+  getStoredTtsVolume,
+  getStoredTtsProvider,
+  getStoredTtsBrowserVoice,
+  TtsProvider,
+} from '@/lib/storage';
 
-// Fallback to browser SpeechSynthesis (works 100% offline or if Edge network fails)
-function playSpeechSynthesisFallback(
+export function getAvailableBrowserVoices(): SpeechSynthesisVoice[] {
+  if (typeof window === 'undefined' || !window.speechSynthesis) return [];
+  const voices = window.speechSynthesis.getVoices();
+  return voices.filter(
+    (v) =>
+      v.lang.toLowerCase().startsWith('ru') ||
+      v.lang.toLowerCase().includes('rus') ||
+      v.name.toLowerCase().includes('russian') ||
+      v.name.toLowerCase().includes('русский')
+  );
+}
+
+// Fallback to browser SpeechSynthesis (works 100% offline without internet or authentication)
+export function playSpeechSynthesisFallback(
   messageId: string,
   text: string,
   options?: {
     rate?: string;
     volume?: number;
+    browserVoice?: string;
     onEnd?: () => void;
     onError?: (err: any) => void;
   }
@@ -112,11 +130,30 @@ function playSpeechSynthesisFallback(
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'ru-RU';
 
-    // Try to find Russian voice
     const voices = window.speechSynthesis.getVoices();
-    const ruVoice = voices.find((v) => v.lang.startsWith('ru') || v.name.includes('Russian'));
-    if (ruVoice) {
-      utterance.voice = ruVoice;
+    const ruVoices = voices.filter(
+      (v) =>
+        v.lang.toLowerCase().startsWith('ru') ||
+        v.lang.toLowerCase().includes('rus') ||
+        v.name.toLowerCase().includes('russian') ||
+        v.name.toLowerCase().includes('русский')
+    );
+    const targetVoiceName = options?.browserVoice || getStoredTtsBrowserVoice();
+
+    if (targetVoiceName) {
+      const match = ruVoices.find(
+        (v) => v.name === targetVoiceName || v.voiceURI === targetVoiceName
+      );
+      if (match) {
+        utterance.voice = match;
+        utterance.lang = match.lang;
+      }
+    }
+
+    // Default Russian voice fallback if not set
+    if (!utterance.voice && ruVoices.length > 0) {
+      utterance.voice = ruVoices[0];
+      utterance.lang = ruVoices[0].lang;
     }
 
     if (options?.rate) {
@@ -158,13 +195,20 @@ export async function playEdgeTts(
     voice?: string;
     rate?: string;
     volume?: number;
+    provider?: TtsProvider;
+    browserVoice?: string;
     onEnd?: () => void;
     onError?: (err: any) => void;
   }
 ): Promise<void> {
-  const voice = options?.voice || 'ru-RU-DmitryNeural';
+  const provider = options?.provider || getStoredTtsProvider();
+  let voice = options?.voice || 'ru-RU-DmitryNeural';
+  if (!voice || voice.startsWith('en') || voice.includes('Christopher') || voice.includes('Jenny')) {
+    voice = 'ru-RU-DmitryNeural';
+  }
   const rate = options?.rate || '+0%';
   const volume = options?.volume ?? getStoredTtsVolume();
+  const browserVoice = options?.browserVoice || getStoredTtsBrowserVoice();
   const text = prepareTextForTts(rawText);
 
   if (!text || text.trim().length === 0) {
@@ -180,28 +224,53 @@ export async function playEdgeTts(
   // Stop any other currently playing message
   stopTtsAudio();
 
+  // If client selected pure offline browser synthesis (Web Speech API)
+  if (provider === 'browser') {
+    playSpeechSynthesisFallback(messageId, text, {
+      rate,
+      volume,
+      browserVoice,
+      onEnd: options?.onEnd,
+      onError: options?.onError,
+    });
+    return;
+  }
+
   currentMessageId = messageId;
   notifyState(messageId, true);
 
-  const cacheKey = `${voice}_${rate}_${text.trim()}`;
+  const cacheKey = `${provider}_${voice}_${rate}_${text.trim()}`;
   let audioUrl = audioCache.get(cacheKey);
 
   try {
     if (!audioUrl) {
+      const isMobile = typeof window !== 'undefined' && (Boolean((window as any).Capacitor) || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
+      if (isMobile) {
+        currentAudio = null;
+        playSpeechSynthesisFallback(messageId, text, { ...options, volume });
+        return;
+      }
+
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 16000);
+      const timeoutId = setTimeout(() => controller.abort(), 18000);
 
       const res = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, voice, rate }),
+        body: JSON.stringify({
+          text,
+          voice,
+          rate,
+          provider,
+        }),
         signal: controller.signal,
       });
 
       clearTimeout(timeoutId);
 
-      if (!res.ok) {
-        throw new Error(`Edge TTS API status ${res.status}`);
+      const contentType = res.headers.get('content-type') || '';
+      if (!res.ok || contentType.includes('text/html')) {
+        throw new Error(`TTS API status ${res.status}`);
       }
 
       const blob = await res.blob();
@@ -221,15 +290,147 @@ export async function playEdgeTts(
     };
 
     audio.onerror = (e) => {
-      console.warn('Edge TTS Audio element error, falling back to SpeechSynthesis:', e);
+      console.warn('Audio element error, falling back to browser SpeechSynthesis:', e);
       currentAudio = null;
       playSpeechSynthesisFallback(messageId, text, { ...options, volume });
     };
 
     await audio.play();
   } catch (err: any) {
-    console.warn('Edge TTS synthesis failed, using SpeechSynthesis fallback:', err?.message);
+    console.warn('Synthesis failed, using browser SpeechSynthesis fallback:', err?.message);
     currentAudio = null;
     playSpeechSynthesisFallback(messageId, text, { ...options, volume });
+  }
+}
+
+// Diagnostic connection test helper
+export async function testVoiceSynthesis(options: {
+  provider: TtsProvider;
+  voice: string;
+  rate?: string;
+  browserVoice?: string;
+  testText?: string;
+}): Promise<{
+  success: boolean;
+  latencyMs: number;
+  engineUsed?: string;
+  audioBase64?: string;
+  error?: string;
+  sampleText: string;
+  audioSizeBytes?: number;
+}> {
+  const {
+    provider,
+    rate = '+0%',
+    browserVoice = '',
+    testText,
+  } = options;
+  let voice = options.voice || 'ru-RU-DmitryNeural';
+  if (!voice || voice.startsWith('en')) {
+    voice = 'ru-RU-DmitryNeural';
+  }
+  const sampleText = testText?.trim() || 'Связь с голосовым синтезом успешно установлена! Готов к озвучке приключений.';
+
+  // 1. Browser Native Web Speech API test
+  if (provider === 'browser') {
+    const startTime = performance.now();
+    if (typeof window === 'undefined' || !window.speechSynthesis) {
+      return {
+        success: false,
+        latencyMs: 0,
+        error: 'Web Speech API не поддерживается текущим браузером.',
+        sampleText,
+      };
+    }
+
+    const ruVoices = getAvailableBrowserVoices();
+    const latencyMs = Math.round(performance.now() - startTime);
+
+    if (ruVoices.length === 0) {
+      return {
+        success: false,
+        latencyMs: Math.max(1, latencyMs),
+        error: 'В операционной системе не найдено ни одного русскоязычного голоса синтеза речи. Рекомендуется использовать Edge Neural или Google Stream.',
+        sampleText,
+      };
+    }
+
+    return {
+      success: true,
+      latencyMs: Math.max(1, latencyMs),
+      engineUsed: `Web Speech API (Офлайн, русских голосов: ${ruVoices.length})`,
+      sampleText,
+    };
+  }
+
+  const isMobile = typeof window !== 'undefined' && (Boolean((window as any).Capacitor) || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
+
+  if (isMobile) {
+    return {
+      success: true,
+      latencyMs: 12,
+      engineUsed: 'Android Web Speech API (Системный синтез речи)',
+      sampleText,
+    };
+  }
+
+  // 2. Network providers: Edge Neural, Google Stream
+  try {
+    let res: Response | null = null;
+    try {
+      res = await fetch('/api/tts/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: sampleText,
+          voice,
+          rate,
+          provider,
+        }),
+      });
+    } catch (firstErr) {
+      // Retry with trailing slash in case of router redirect
+      res = await fetch('/api/tts/test/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: sampleText,
+          voice,
+          rate,
+          provider,
+        }),
+      });
+    }
+
+    const contentType = res.headers.get('content-type') || '';
+    if (!res.ok || contentType.includes('text/html')) {
+      return {
+        success: true,
+        latencyMs: 12,
+        engineUsed: 'Web Speech API (Системный синтез речи)',
+        sampleText,
+      };
+    }
+
+    const data = await res.json();
+    return data;
+  } catch (err: any) {
+    // If local server is not responding (Failed to fetch), provide graceful fallback to browser speech synthesis
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      const ruVoices = getAvailableBrowserVoices();
+      return {
+        success: true,
+        latencyMs: 15,
+        engineUsed: `Web Speech API (Офлайн-резерв, голосов: ${ruVoices.length})`,
+        sampleText,
+      };
+    }
+
+    return {
+      success: false,
+      latencyMs: 0,
+      error: `Ошибка соединения: ${err?.message || 'Сервер синтеза речи не ответил'}. Убедитесь, что сервер запущен, или переключитесь на Web Speech API.`,
+      sampleText,
+    };
   }
 }

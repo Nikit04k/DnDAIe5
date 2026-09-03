@@ -39,8 +39,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="ru" className={`${cinzel.variable} ${inter.variable}`}>
-      <body className="font-sans antialiased bg-slate-950 text-slate-100 min-h-screen selection:bg-amber-500/30 selection:text-amber-200">
+    <html lang="ru" className={`${cinzel.variable} ${inter.variable} h-full overflow-hidden`}>
+      <body className="font-sans antialiased bg-[#06070a] text-slate-100 h-full h-[100dvh] max-h-[100dvh] overflow-hidden overscroll-none selection:bg-amber-500/30 selection:text-amber-200">
         {children}
       </body>
     </html>
