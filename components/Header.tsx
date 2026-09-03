@@ -14,6 +14,7 @@ import {
   Heart,
   MapPin,
   Sparkles,
+  Save,
 } from 'lucide-react';
 import { CharacterSheet } from '@/types/dnd';
 
@@ -25,6 +26,7 @@ interface HeaderProps {
   onOpenDiceRoller: () => void;
   onOpenJournal: () => void;
   onOpenSettings: () => void;
+  onOpenSaveLoad: () => void;
   onNewAdventure: () => void;
   onExportSave: () => void;
   onImportSave: (file: File) => void;
@@ -49,6 +51,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenDiceRoller,
   onOpenJournal,
   onOpenSettings,
+  onOpenSaveLoad,
   onNewAdventure,
   onExportSave,
   onImportSave,
@@ -271,6 +274,16 @@ export const Header: React.FC<HeaderProps> = ({
           <RotateCcw className="w-4 h-4" />
         </button>
 
+
+        {/* Save / Load Slots Manager */}
+        <button
+          onClick={onOpenSaveLoad}
+          title="Сохранения и Загрузка игры [Alt+L]"
+          className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-amber-400/40 text-amber-400 hover:text-amber-300 transition flex items-center gap-1.5 text-xs font-semibold shadow-sm cursor-pointer flex-shrink-0"
+        >
+          <Save className="w-4 h-4" />
+          <span className="hidden sm:inline">Сохранения</span>
+        </button>
 
         {/* Settings */}
         <button

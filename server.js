@@ -219,15 +219,54 @@ app.prepare().then(() => {
           case 'UPDATE_CHARACTER': {
             if (clientData && clientData.player) {
               clientData.player.character = msg.character;
+              clientData.player.name = msg.character?.name || clientData.player.name;
               const idx = roomState.players.findIndex((p) => p.id === clientData.player.id);
               if (idx >= 0) {
                 roomState.players[idx].character = msg.character;
+                roomState.players[idx].name = msg.character?.name || roomState.players[idx].name;
               }
               broadcast({
                 type: 'PLAYER_UPDATED',
                 player: clientData.player,
               });
             }
+            break;
+          }
+
+          case 'SET_READY': {
+            if (clientData && clientData.player) {
+              clientData.player.isReady = Boolean(msg.isReady);
+              const idx = roomState.players.findIndex((p) => p.id === clientData.player.id);
+              if (idx >= 0) {
+                roomState.players[idx].isReady = Boolean(msg.isReady);
+              }
+              broadcast({
+                type: 'PLAYER_READY_CHANGED',
+                playerId: clientData.player.id,
+                isReady: Boolean(msg.isReady),
+              });
+              broadcast({
+                type: 'PLAYER_UPDATED',
+                player: clientData.player,
+              });
+            }
+            break;
+          }
+
+          case 'UPDATE_LOBBY_SETTINGS': {
+            broadcast({
+              type: 'LOBBY_SETTINGS_UPDATED',
+              difficulty: msg.difficulty,
+            });
+            break;
+          }
+
+          case 'START_GAME': {
+            broadcast({
+              type: 'GAME_STARTED',
+              difficulty: msg.difficulty,
+              worldSettings: msg.worldSettings,
+            });
             break;
           }
 

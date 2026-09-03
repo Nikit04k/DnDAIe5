@@ -1,7 +1,8 @@
-import { GameSessionState, WorldSettings } from '@/types/dnd';
+import { GameSessionState, WorldSettings, SaveSlot, CharacterSheet, GameDifficulty } from '@/types/dnd';
 
 const STORAGE_KEYS = {
   CURRENT_SESSION: 'dnd_solo_current_session',
+  SAVE_SLOTS: 'dnd_save_slots',
   USER_API_KEY: 'dnd_deepseek_api_key',
   LEGACY_GEMINI_KEY: 'dnd_gemini_api_key',
   USER_MODEL: 'dnd_deepseek_model',
@@ -453,6 +454,259 @@ export function setStoredWorldSettings(world: WorldSettings): void {
   } catch (err) {
     console.error('Failed to save world settings:', err);
   }
+}
+
+// ================= MULTI-SLOT SAVE & LOAD SYSTEM =================
+
+function createSlotFromSession(
+  session: GameSessionState,
+  slotId: string,
+  customName?: string,
+  isAuto: boolean = false,
+  isDead: boolean = false,
+  deathReason?: string
+): SaveSlot {
+  const diff: GameDifficulty = session.world?.difficulty || 'standard';
+  const isHardcore = diff === 'hardcore';
+
+  let name = customName;
+  if (!name) {
+    if (isAuto) {
+      name = 'Автосохранение';
+    } else if (isHardcore) {
+      name = '💀 Хардкор (Ironman)';
+    } else {
+      name = `Сохранение: ${session.character?.name || 'Герой'}`;
+    }
+  }
+
+  const currentMinutes = session.inGameMinutes !== undefined ? session.inGameMinutes : 480;
+  const clockHours = Math.floor((currentMinutes % 1440) / 60);
+  const clockMins = Math.floor(currentMinutes % 60);
+  const formattedTime = `День ${session.inGameDay || 1} • ${String(clockHours).padStart(2, '0')}:${String(clockMins).padStart(2, '0')}`;
+
+  return {
+    id: isHardcore ? 'slot_hardcore' : slotId,
+    name,
+    savedAt: Date.now(),
+    isAutoSave: isAuto,
+    isHardcore,
+    isDead,
+    deathReason,
+    difficulty: diff,
+    sessionState: session,
+    characterName: session.character?.name || 'Безымянный',
+    characterClass: session.character?.class || 'Воин',
+    characterRace: session.character?.race || 'Человек',
+    characterLevel: session.character?.level || 1,
+    characterHp: session.character?.currentHp || 10,
+    characterMaxHp: session.character?.maxHp || 10,
+    characterAc: session.character?.ac || 10,
+    currentLocation: session.currentLocation || 'Начало пути',
+    inGameTime: formattedTime,
+  };
+}
+
+export function saveSlotsToStorage(slots: SaveSlot[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(STORAGE_KEYS.SAVE_SLOTS, JSON.stringify(slots));
+  } catch (e) {
+    console.error('Failed to persist save slots:', e);
+  }
+}
+
+export function getAllSaveSlots(): SaveSlot[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.SAVE_SLOTS);
+    if (!raw) {
+      // If no slots exist yet but an active session is playing, synthesize an auto-save slot
+      const current = loadSessionState();
+      if (current && current.character) {
+        const autoSlot = createSlotFromSession(current, 'slot_auto', 'Автосохранение', true);
+        saveSlotsToStorage([autoSlot]);
+        return [autoSlot];
+      }
+      return [];
+    }
+    const slots: SaveSlot[] = JSON.parse(raw);
+    return Array.isArray(slots) ? slots : [];
+  } catch (e) {
+    console.error('Failed to load save slots:', e);
+    return [];
+  }
+}
+
+export function saveCurrentGameToSlot(
+  slotId?: string,
+  customName?: string,
+  isAuto: boolean = false,
+  markDead: boolean = false,
+  deathReason?: string
+): SaveSlot | null {
+  const current = loadSessionState();
+  if (!current || !current.character) return null;
+
+  const isHardcore = current.world?.difficulty === 'hardcore';
+  const actualSlotId = isHardcore ? 'slot_hardcore' : (slotId || `slot_${Date.now()}`);
+
+  const newSlot = createSlotFromSession(current, actualSlotId, customName, isAuto, markDead, deathReason);
+  const existingSlots = getAllSaveSlots();
+
+  if (isHardcore) {
+    // Ironman: Only 1 slot is permitted across the board for hardcore
+    const filtered = existingSlots.filter((s) => s.id !== 'slot_hardcore');
+    filtered.unshift(newSlot);
+    saveSlotsToStorage(filtered);
+    return newSlot;
+  }
+
+  const existingIdx = existingSlots.findIndex((s) => s.id === actualSlotId);
+  if (existingIdx >= 0) {
+    existingSlots[existingIdx] = newSlot;
+  } else {
+    if (isAuto) {
+      const nonAuto = existingSlots.filter((s) => !s.isAutoSave);
+      existingSlots.length = 0;
+      existingSlots.push(newSlot, ...nonAuto);
+    } else {
+      existingSlots.push(newSlot);
+    }
+  }
+
+  saveSlotsToStorage(existingSlots);
+  return newSlot;
+}
+
+export function loadGameFromSlot(slotId: string): GameSessionState | null {
+  const slots = getAllSaveSlots();
+  const found = slots.find((s) => s.id === slotId);
+  if (!found || !found.sessionState) return null;
+
+  // Restore current session state
+  saveSessionState(found.sessionState);
+
+  // Restore world settings
+  if (found.sessionState.world) {
+    setStoredWorldSettings(found.sessionState.world);
+  }
+
+  return found.sessionState;
+}
+
+export function deleteSaveSlot(slotId: string): boolean {
+  const slots = getAllSaveSlots();
+  const next = slots.filter((s) => s.id !== slotId);
+  saveSlotsToStorage(next);
+  return next.length < slots.length;
+}
+
+export function exportSaveSlotToFile(slotId: string): void {
+  const slots = getAllSaveSlots();
+  const found = slots.find((s) => s.id === slotId);
+  if (!found) return;
+
+  const cleanName = (found.characterName || 'Hero').replace(/[^a-zA-Zа-яА-Я0-9_-]/g, '_');
+  const dateStr = new Date(found.savedAt).toISOString().split('T')[0];
+  const filename = `dnd_save_${cleanName}_lvl${found.characterLevel}_${dateStr}.json`;
+
+  const blob = new Blob([JSON.stringify(found, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+export async function importSaveSlotFromFile(file: File): Promise<SaveSlot> {
+  const text = await file.text();
+  const parsed = JSON.parse(text);
+
+  let session: GameSessionState;
+  let slotName = parsed.name || 'Импортированное сохранение';
+
+  if (parsed.sessionState && parsed.characterName) {
+    // File is a SaveSlot
+    session = parsed.sessionState;
+    slotName = parsed.name || `Импорт: ${parsed.characterName}`;
+  } else if (parsed.character) {
+    // File is a GameSessionState export
+    session = parsed;
+    slotName = `Импорт: ${parsed.character.name}`;
+  } else {
+    throw new Error('Некорректный формат файла сохранения D&D');
+  }
+
+  const slotId = session.world?.difficulty === 'hardcore' ? 'slot_hardcore' : `slot_${Date.now()}`;
+  const newSlot = createSlotFromSession(session, slotId, slotName, false);
+
+  const slots = getAllSaveSlots();
+  const existingIdx = slots.findIndex((s) => s.id === slotId);
+  if (existingIdx >= 0) {
+    slots[existingIdx] = newSlot;
+  } else {
+    slots.push(newSlot);
+  }
+  saveSlotsToStorage(slots);
+
+  return newSlot;
+}
+
+export interface SavedCharacterEntry {
+  character: CharacterSheet;
+  source: string;
+  sourceId: string;
+  difficulty: GameDifficulty;
+  savedAt: number;
+  isDead?: boolean;
+}
+
+export function getAllSavedCharacters(): SavedCharacterEntry[] {
+  const results: SavedCharacterEntry[] = [];
+  const seen = new Set<string>();
+
+  // 1. Check all save slots
+  const slots = getAllSaveSlots();
+  for (const s of slots) {
+    if (s.sessionState?.character) {
+      const c = s.sessionState.character;
+      const key = `${c.name}_${c.class}_${c.level}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        results.push({
+          character: c,
+          source: s.name,
+          sourceId: s.id,
+          difficulty: s.difficulty || 'standard',
+          savedAt: s.savedAt,
+          isDead: s.isDead,
+        });
+      }
+    }
+  }
+
+  // 2. Check current active session
+  const current = loadSessionState();
+  if (current?.character) {
+    const c = current.character;
+    const key = `${c.name}_${c.class}_${c.level}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      results.push({
+        character: c,
+        source: 'Текущая игра',
+        sourceId: 'current',
+        difficulty: current.world?.difficulty || 'standard',
+        savedAt: current.lastPlayedAt || Date.now(),
+      });
+    }
+  }
+
+  return results;
 }
 
 

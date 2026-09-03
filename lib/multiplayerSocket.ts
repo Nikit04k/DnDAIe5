@@ -9,6 +9,8 @@ import {
   StateUpdate,
   WsClientMessage,
   WsServerMessage,
+  GameDifficulty,
+  WorldSettings,
 } from '@/types/dnd';
 
 type EventCallback = (msg: WsServerMessage) => void;
@@ -167,6 +169,28 @@ class MultiplayerSocketManager {
     this.send({
       type: 'UPDATE_CHARACTER',
       character,
+    });
+  }
+
+  public setReady(isReady: boolean) {
+    this.send({
+      type: 'SET_READY',
+      isReady,
+    });
+  }
+
+  public updateLobbySettings(difficulty?: GameDifficulty) {
+    this.send({
+      type: 'UPDATE_LOBBY_SETTINGS',
+      difficulty,
+    });
+  }
+
+  public startGame(difficulty?: GameDifficulty, worldSettings?: WorldSettings) {
+    this.send({
+      type: 'START_GAME',
+      difficulty,
+      worldSettings,
     });
   }
 

@@ -210,7 +210,7 @@ export interface LorebookEntry {
 }
 
 export interface GameSessionState {
-  id: string;
+  id?: string;
   character: CharacterSheet;
   world: WorldSettings;
   history: ChatMessage[];
@@ -229,8 +229,8 @@ export interface GameSessionState {
   }>;
   lorebookEntries?: LorebookEntry[];
   storySummary?: string;
-  createdAt: number;
-  lastPlayedAt: number;
+  createdAt?: number;
+  lastPlayedAt?: number;
 }
 
 export interface CharacterPreset {
@@ -301,6 +301,9 @@ export type WsClientMessage =
   | { type: 'TRIGGER_NEXT_DM_STEP'; triggerReason?: string }
   | { type: 'FORCE_DM_TURN' }
   | { type: 'UPDATE_STATE_HOST'; state: Partial<MultiplayerRoomState> }
+  | { type: 'SET_READY'; isReady: boolean }
+  | { type: 'START_GAME'; difficulty?: GameDifficulty; worldSettings?: WorldSettings }
+  | { type: 'UPDATE_LOBBY_SETTINGS'; difficulty?: GameDifficulty }
   | { type: 'PING'; timestamp: number };
 
 export type WsServerMessage =
@@ -308,6 +311,9 @@ export type WsServerMessage =
   | { type: 'PLAYER_JOINED'; player: NetworkPlayer }
   | { type: 'PLAYER_LEFT'; playerId: string; playerName: string }
   | { type: 'PLAYER_UPDATED'; player: NetworkPlayer }
+  | { type: 'PLAYER_READY_CHANGED'; playerId: string; isReady: boolean }
+  | { type: 'GAME_STARTED'; difficulty?: GameDifficulty; worldSettings?: WorldSettings }
+  | { type: 'LOBBY_SETTINGS_UPDATED'; difficulty?: GameDifficulty }
   | { type: 'CHAT_MESSAGE'; message: ChatMessage }
   | { type: 'CHAT_HISTORY_SYNC'; history: ChatMessage[] }
   | { type: 'DM_START_THINKING' }
@@ -319,4 +325,27 @@ export type WsServerMessage =
   | { type: 'STATE_SYNC'; currentLocation?: string; inGameDay?: number; inGameMinutes?: number; inGameTime?: string; partyCompanions?: PartyCompanion[] }
   | { type: 'PONG'; clientTimestamp: number; serverTimestamp: number }
   | { type: 'ERROR'; error: string };
+
+// ================= SAVE / LOAD TYPES =================
+export interface SaveSlot {
+  id: string;              // e.g. 'slot_auto', 'slot_1', 'slot_hardcore'
+  name: string;            // Slot name
+  savedAt: number;         // Date.now() timestamp
+  isAutoSave?: boolean;
+  isHardcore?: boolean;    // Permadeath mode
+  isDead?: boolean;        // Character permanently dead
+  deathReason?: string;
+  difficulty: GameDifficulty;
+  sessionState: GameSessionState;
+  // Quick metadata for preview card
+  characterName: string;
+  characterClass: string;
+  characterRace: string;
+  characterLevel: number;
+  characterHp: number;
+  characterMaxHp: number;
+  characterAc: number;
+  currentLocation: string;
+  inGameTime: string;
+}
 

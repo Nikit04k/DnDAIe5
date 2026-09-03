@@ -16,6 +16,8 @@ import {
   NetworkPlayer,
   PlayerRoundAction,
   DiceRollResult,
+  SaveSlot,
+  GameDifficulty,
 } from '@/types/dnd';
 
 const DEFAULT_LOREBOOK_ENTRIES: LorebookEntry[] = [
@@ -99,6 +101,7 @@ import {
   setGpuSaverEnabled,
   getStoredWorldSettings,
   setStoredWorldSettings,
+  saveCurrentGameToSlot,
 } from '@/lib/storage';
 import { playEdgeTts } from '@/lib/edgeTts';
 import {
@@ -122,6 +125,7 @@ import { SettingsModal } from '@/components/SettingsModal';
 import { JournalModal } from '@/components/JournalModal';
 import { CharacterCreatorModal } from '@/components/CharacterCreatorModal';
 import { LanMultiplayerModal } from '@/components/LanMultiplayerModal';
+import { SaveLoadModal } from '@/components/SaveLoadModal';
 import { PartyRosterPanel } from '@/components/PartyRosterPanel';
 import {
   Shield,
@@ -136,6 +140,8 @@ import {
   Award,
   Heart,
   Coins,
+  Save,
+  FolderOpen,
 } from 'lucide-react';
 
 export default function DnDApp() {
@@ -216,6 +222,7 @@ export default function DnDApp() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isJournalOpen, setIsJournalOpen] = useState(false);
   const [isLanModalOpen, setIsLanModalOpen] = useState(false);
+  const [isSaveLoadOpen, setIsSaveLoadOpen] = useState(false);
 
   // LAN Multiplayer State
   const [isMultiplayerConnected, setIsMultiplayerConnected] = useState<boolean>(false);
@@ -543,6 +550,18 @@ export default function DnDApp() {
       setPendingRoll(rollReq);
       if (data.suggested_actions) setSuggestedActions(data.suggested_actions);
 
+      // Auto-save session state to slot
+      try {
+        const currentDiff = state.world?.difficulty || 'standard';
+        if (currentDiff === 'hardcore') {
+          saveCurrentGameToSlot('slot_hardcore', '💀 Хардкор (Ironman)', false);
+        } else {
+          saveCurrentGameToSlot(undefined, undefined, true);
+        }
+      } catch (e) {
+        console.error('Auto-save error:', e);
+      }
+
       // Broadcast DM response to all connected LAN multiplayer clients
       if (state.isMultiplayerConnected && state.isHost) {
         lanSocket.broadcastDmResponse(
@@ -721,6 +740,30 @@ export default function DnDApp() {
           if (msg.inGameDay) setInGameDay(msg.inGameDay);
           if (msg.inGameMinutes !== undefined) setInGameMinutes(msg.inGameMinutes);
           if (msg.partyCompanions) setPartyCompanions(msg.partyCompanions);
+          break;
+
+        case 'PLAYER_READY_CHANGED':
+          setNetworkPlayers((prev) =>
+            prev.map((p) => (p.id === msg.playerId ? { ...p, isReady: msg.isReady } : p))
+          );
+          break;
+
+        case 'GAME_STARTED':
+          if (msg.difficulty) {
+            setWorld((prev) => ({ ...prev, difficulty: msg.difficulty }));
+          }
+          if (msg.worldSettings) {
+            setWorld(msg.worldSettings);
+          }
+          setIsGameStarted(true);
+          setIsLanModalOpen(false);
+          playDiceRollSound();
+          break;
+
+        case 'LOBBY_SETTINGS_UPDATED':
+          if (msg.difficulty) {
+            setWorld((prev) => ({ ...prev, difficulty: msg.difficulty }));
+          }
           break;
 
         case 'PONG':
@@ -1473,6 +1516,40 @@ export default function DnDApp() {
     setIsCreatorOpen(true);
   };
 
+  const handleSessionLoaded = (loaded: GameSessionState) => {
+    if (!loaded) return;
+    if (loaded.character) setCharacter(loaded.character);
+    if (loaded.world) {
+      setWorld(loaded.world);
+      setStoredWorldSettings(loaded.world);
+    }
+    if (loaded.history) setHistory(loaded.history);
+    if (loaded.currentLocation) setCurrentLocation(loaded.currentLocation);
+    if (loaded.inGameDay) setInGameDay(loaded.inGameDay);
+    if (loaded.inGameMinutes !== undefined) setInGameMinutes(loaded.inGameMinutes);
+    if (loaded.partyCompanions) setPartyCompanions(loaded.partyCompanions);
+    if (loaded.journalEntries) setJournalEntries(loaded.journalEntries);
+    if (loaded.lorebookEntries) setLorebookEntries(loaded.lorebookEntries);
+    if (loaded.suggestedActions) setSuggestedActions(loaded.suggestedActions);
+    if (loaded.pendingRoll !== undefined) setPendingRoll(loaded.pendingRoll);
+    if (loaded.storySummary) setStorySummary(loaded.storySummary);
+    setIsGameStarted(true);
+    playDiceRollSound();
+  };
+
+  const handleLobbyStartGame = (chosenDiff?: GameDifficulty) => {
+    const nextWorld: WorldSettings = {
+      ...world,
+      difficulty: chosenDiff || world.difficulty || 'standard',
+    };
+    setWorld(nextWorld);
+    setStoredWorldSettings(nextWorld);
+    setIsGameStarted(true);
+    lanSocket.startGame(chosenDiff || world.difficulty, nextWorld);
+    setIsLanModalOpen(false);
+    playDiceRollSound();
+  };
+
   // Item consumption callback from character sheet (potions, scrolls, torches, water flask)
   const handleItemUsed = (itemName: string, narrativeAction?: string) => {
     handleSendAction(narrativeAction || `Я применяю: ${itemName}. Опиши эффект и результат этого действия.`);
@@ -1489,6 +1566,7 @@ export default function DnDApp() {
         onOpenDiceRoller={() => setIsDiceRollerOpen(true)}
         onOpenJournal={() => setIsJournalOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
+        onOpenSaveLoad={() => setIsSaveLoadOpen(true)}
         onNewAdventure={() => setIsCreatorOpen(true)}
         onExportSave={handleExportSave}
         onImportSave={handleImportSave}
@@ -1829,6 +1907,13 @@ export default function DnDApp() {
                 Создать персонажа и начать
               </button>
               <button
+                onClick={() => setIsSaveLoadOpen(true)}
+                className="px-6 py-3.5 bg-slate-900 hover:bg-slate-800 border border-amber-500/40 text-amber-300 font-semibold text-sm rounded-xl shadow-lg transition cursor-pointer flex items-center gap-2"
+              >
+                <FolderOpen className="w-4 h-4 text-amber-400" />
+                <span>Загрузить сохранение</span>
+              </button>
+              <button
                 onClick={() => setIsLanModalOpen(true)}
                 className="px-6 py-3.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 font-semibold text-sm rounded-xl shadow-lg transition cursor-pointer flex items-center gap-2"
               >
@@ -1918,6 +2003,39 @@ export default function DnDApp() {
         onStartHost={handleStartHost}
         onConnectClient={handleConnectClient}
         onDisconnect={handleDisconnectMultiplayer}
+        onSelectCharacter={(char) => setCharacter(char)}
+        onOpenCharacterCreator={() => setIsCreatorOpen(true)}
+        onStartGame={handleLobbyStartGame}
+        currentDifficulty={world.difficulty || 'standard'}
+        onChangeDifficulty={(diff) => {
+          const next = { ...world, difficulty: diff };
+          setWorld(next);
+          setStoredWorldSettings(next);
+        }}
+      />
+
+      <SaveLoadModal
+        isOpen={isSaveLoadOpen}
+        onClose={() => setIsSaveLoadOpen(false)}
+        isGameStarted={isGameStarted}
+        currentSession={{
+          id: 'session_' + (character?.name || 'hero'),
+          createdAt: Date.now(),
+          character: character!,
+          world,
+          history,
+          currentLocation,
+          inGameDay,
+          inGameMinutes,
+          partyCompanions,
+          journalEntries,
+          lorebookEntries,
+          suggestedActions,
+          pendingRoll,
+          storySummary,
+          lastPlayedAt: Date.now(),
+        }}
+        onSessionLoaded={handleSessionLoaded}
       />
 
       <CharacterCreatorModal
