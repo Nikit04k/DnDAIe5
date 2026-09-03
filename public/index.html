@@ -148,11 +148,6 @@
       localStorage.setItem('dnd_remote_host', host);
       window.location.href = host;
     });
-
-    // If served inside Capacitor native app, auto-redirect to saved host if present
-    if (window.Capacitor && savedHost) {
-      window.location.href = savedHost;
-    }
   </script>
 </body>
 </html>

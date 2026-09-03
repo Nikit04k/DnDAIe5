@@ -33,8 +33,3 @@ tmp_audio/
 
 # application packaging
 /dist/
-android/.gradle/
-android/app/build/
-android/build/
-android/local.properties
-android/app/src/main/assets/public/

@@ -244,7 +244,7 @@ export async function playEdgeTts(
 
   try {
     if (!audioUrl) {
-      const isMobile = typeof window !== 'undefined' && (Boolean((window as any).Capacitor) || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
+      const isMobile = typeof window !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
       if (isMobile) {
         currentAudio = null;
         playSpeechSynthesisFallback(messageId, text, { ...options, volume });
@@ -363,13 +363,12 @@ export async function testVoiceSynthesis(options: {
     };
   }
 
-  const isMobile = typeof window !== 'undefined' && (Boolean((window as any).Capacitor) || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
-
+  const isMobile = typeof window !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
   if (isMobile) {
     return {
       success: true,
       latencyMs: 12,
-      engineUsed: 'Android Web Speech API (Системный синтез речи)',
+      engineUsed: 'Мобильный Web Speech API (Системный синтез речи)',
       sampleText,
     };
   }

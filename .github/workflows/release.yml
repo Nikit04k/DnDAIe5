@@ -36,64 +36,14 @@ jobs:
             dist/DnDAIe5-Setup-*.exe
             dist/DnDAIe5-Portable-*.exe
 
-  build-android:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Java JDK
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '21'
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build Mobile SPA and Sync Capacitor Android
-        run: npm run cap:build
-
-      - name: Build Android APK
-        run: |
-          cd android
-          chmod +x gradlew
-          ./gradlew assembleDebug
-
-      - name: Copy and rename APK
-        run: |
-          mkdir -p dist
-          cp android/app/build/outputs/apk/debug/app-debug.apk dist/DnDAIe5-Mobile.apk
-
-      - name: Upload Android Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-binary
-          path: dist/DnDAIe5-Mobile.apk
-
   publish-release:
-    needs: [build-windows, build-android]
+    needs: [build-windows]
     runs-on: ubuntu-latest
     steps:
       - name: Download Windows Artifacts
         uses: actions/download-artifact@v4
         with:
           name: windows-binaries
-          path: dist
-
-      - name: Download Android Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: android-binary
           path: dist
 
       - name: Create GitHub Release
@@ -107,15 +57,15 @@ jobs:
             # ⚔️ DnDAIe5 — AI Dungeon Master & Party RPG (${{ github.ref_name }})
 
             ## 📦 Скачать дистрибутивы игры:
-            - **Windows Portable (Портативная версия без установки):** `DnDAIe5-Portable-1.0.2.exe`
-            - **Windows Setup (Установщик NSIS):** `DnDAIe5-Setup-1.0.2.exe`
-            - **Android (Установочный APK для смартфонов):** `DnDAIe5-Mobile.apk`
+            - **Windows Portable (Портативная версия без установки):** `DnDAIe5-Portable-*.exe`
+            - **Windows Setup (Установщик NSIS):** `DnDAIe5-Setup-*.exe`
 
-            ### 🌟 Что нового в версии ${{ github.ref_name }}:
-            - 🚀 **Запуск DnDAIe5 Portable**: Полностью исправлен запуск портативной версии для Windows: устранен конфликт с потоком ввода `stdin`, добавлен мгновенный заставочный сплэш-скрин распаковки и автономное сохранение данных персонажей и миров в папку `data` рядом с исполняемым файлом.
-            - 🛠️ **Стабильность сервера**: Улучшена обработка занятых портов (`EADDRINUSE`) с информативным диалоговым окном, оптимизирована очистка ресурсов и фоновых процессов при закрытии.
-            - 📱 **Мобильная оптимизация**: Обновлен и синхронизирован автономный SPA-пайплайн для мобильного Android-клиента.
-            - 🎙️ **Синтез речи (TTS)**: Дополнительная устойчивость прямого Edge TTS и потокового синтеза речи с авто-фоллбеком на офлайн Web Speech API.
+            > 📱 **Для смартфонов и мобильных устройств**: игра доступна через любой мобильный браузер при подключении к хосту в локальной сети (LAN) или через веб-развертывание.
+
+            ### 🌟 Особенности релиза:
+            - 🚀 **DnDAIe5 Portable**: Полная автономность, быстрое извлечение со сплэш-скрином и сохранение прогресса в папку `data` рядом с исполняемым файлом.
+            - 📱 **Адаптивный мобильный веб-интерфейс**: Оптимизированный интерфейс для смартфонов и планшетов без необходимости устанавливать отдельное приложение.
+            - 🎙️ **Синтез речи (TTS)**: Поддержка Microsoft Edge Neural TTS, потоковых голосов и офлайн Web Speech API.
+            - 👥 **LAN Мультиплеер**: Совместная ролевая игра по локальной сети.
           files: |
             dist/*.exe
-            dist/*.apk

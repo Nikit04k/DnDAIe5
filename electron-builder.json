@@ -9,8 +9,6 @@
   "asar": false,
   "files": [
     "**/*",
-    "!android/**/*",
-    "!capacitor.config.ts",
     "!.git/**/*",
     "!dist/**/*",
     "!out/**/*",

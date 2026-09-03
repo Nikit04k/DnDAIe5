@@ -905,7 +905,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }, 600);
   };
 
-  const isMobileClient = typeof window !== 'undefined' && (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || Boolean((window as any).Capacitor));
+  const isMobileClient = typeof window !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
   return (
     <div

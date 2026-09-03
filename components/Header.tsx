@@ -78,7 +78,7 @@ export const Header: React.FC<HeaderProps> = ({
   const hpColor = hpPercent > 50 ? 'text-emerald-400' : hpPercent > 20 ? 'text-amber-400' : 'text-red-400';
   const hpBg = hpPercent > 50 ? 'bg-emerald-500' : hpPercent > 20 ? 'bg-amber-500' : 'bg-red-500';
 
-  const isMobile = typeof window !== 'undefined' && (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || Boolean((window as any).Capacitor));
+  const isMobile = typeof window !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
   return (
     <header className="flex-shrink-0 border-b border-slate-800/80 bg-slate-950/98 sticky top-0 z-30 px-2 sm:px-4 py-1.5 sm:py-2.5 flex items-center justify-between shadow-md gap-1 sm:gap-2">

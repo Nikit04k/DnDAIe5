@@ -30,9 +30,7 @@ export interface DirectDmRequest {
 
 export function isStandaloneMobile(): boolean {
   if (typeof window === 'undefined') return false;
-  if (process.env.NEXT_PUBLIC_EXPORT === 'true') return true;
-  if (window.location.protocol === 'file:' || window.location.protocol === 'capacitor:') return true;
-  if (Boolean((window as any).Capacitor?.isNativePlatform?.())) return true;
+  if (window.location.protocol === 'file:') return true;
   return false;
 }
 
