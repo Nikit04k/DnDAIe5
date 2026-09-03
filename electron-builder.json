@@ -6,17 +6,30 @@
     "output": "dist",
     "buildResources": "build"
   },
+  "compression": "maximum",
   "asar": false,
   "files": [
     "**/*",
     "!.git/**/*",
     "!dist/**/*",
     "!out/**/*",
-    "!tmp_audio/**/*",
+    "!build/**/*",
+    "!assets/**/*",
     "!tools/**/*",
     "!scripts/**/*",
+    "!tmp_audio/**/*",
+    "!**/.next/cache/**/*",
+    "!**/.next/diagnostics/**/*",
+    "!**/.next/trace",
+    "!types/**/*",
+    "!tsconfig*.json",
+    "!postcss.config.mjs",
+    "!tailwind.config.ts",
+    "!README.md",
+    "!.env.example",
     "!*.tsbuildinfo",
-    "!*.log"
+    "!*.log",
+    "!**/*.map"
   ],
   "extraMetadata": {
     "main": "electron/main.js"
