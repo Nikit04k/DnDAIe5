@@ -155,11 +155,44 @@ wss.on('connection', (ws) => {
           break;
         }
 
+        case 'SYNC_CHAT_HISTORY': {
+          roomState.history = msg.history || [];
+          broadcast({
+            type: 'CHAT_HISTORY_SYNC',
+            history: roomState.history,
+          });
+          break;
+        }
+
         case 'START_GAME': {
+          if (msg.isNewCampaign) {
+            roomState.history = msg.history || [];
+            roomState.roundActions = {};
+            roomState.inGameDay = msg.inGameDay || 1;
+            roomState.inGameMinutes = msg.inGameMinutes || 480;
+            roomState.inGameTime = msg.inGameTime || 'День 1 • 08:00';
+            roomState.partyCompanions = msg.partyCompanions || [];
+            roomState.pendingRoll = null;
+          } else if (msg.history) {
+            roomState.history = msg.history;
+            roomState.roundActions = {};
+            if (msg.inGameDay) roomState.inGameDay = msg.inGameDay;
+            if (msg.inGameMinutes !== undefined) roomState.inGameMinutes = msg.inGameMinutes;
+            if (msg.inGameTime) roomState.inGameTime = msg.inGameTime;
+            if (msg.partyCompanions) roomState.partyCompanions = msg.partyCompanions;
+          }
+
           broadcast({
             type: 'GAME_STARTED',
             difficulty: msg.difficulty,
             worldSettings: msg.worldSettings,
+            isNewCampaign: msg.isNewCampaign,
+            history: roomState.history,
+            inGameDay: roomState.inGameDay,
+            inGameMinutes: roomState.inGameMinutes,
+            inGameTime: roomState.inGameTime,
+            partyCompanions: roomState.partyCompanions,
+            storySummary: msg.storySummary,
           });
           break;
         }

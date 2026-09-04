@@ -8,6 +8,9 @@ import {
   ChatMessage,
   DmResponse,
   RollRequirement,
+  DmRollRequest,
+  StateUpdate,
+  DmStateUpdate,
   AbilityScoreKey,
   SkillName,
   GameSessionState,
@@ -18,7 +21,13 @@ import {
   DiceRollResult,
   SaveSlot,
   GameDifficulty,
+  CoopSaveSession,
 } from '@/types/dnd';
+import {
+  triggerRestOrNewDayAutosave,
+  saveCoopSession,
+} from '@/lib/coopStorage';
+
 
 const DEFAULT_LOREBOOK_ENTRIES: LorebookEntry[] = [
   {
@@ -60,7 +69,9 @@ import {
   CANTRIP_SUGGESTIONS_BY_CLASS,
   SPELL_SUGGESTIONS_BY_CLASS,
   SKILL_RUSSIAN_NAMES,
+  recoverSpellSlots,
 } from '@/lib/dndRules';
+
 import { parseAndAdvanceTime, formatInGameClock } from '@/lib/timeUtils';
 import { executeDirectDmTurn, isStandaloneMobile } from '@/lib/directAiClient';
 import {
@@ -159,7 +170,7 @@ export default function DnDApp() {
   });
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [currentLocation, setCurrentLocation] = useState<string>('Вход в Пустоши');
-  const [pendingRoll, setPendingRoll] = useState<RollRequirement | null>(null);
+  const [pendingRoll, setPendingRoll] = useState<RollRequirement | DmRollRequest | null>(null);
   const [suggestedActions, setSuggestedActions] = useState<string[]>([]);
   const [locationsVisited, setLocationsVisited] = useState<string[]>(['Вход в Пустоши']);
   const [partyCompanions, setPartyCompanions] = useState<PartyCompanion[]>([]);
@@ -543,6 +554,7 @@ export default function DnDApp() {
         rollRequest: data.requires_roll?.needed ? data.requires_roll : undefined,
         waitingPlayerName: data.requires_roll?.target_character_name,
         isTargetedRollWaiting: Boolean(data.requires_roll?.needed),
+        privateNarratives: data.private_narratives,
       };
 
       setHistory([...newHistory, dmMessage]);
@@ -553,17 +565,77 @@ export default function DnDApp() {
       setPendingRoll(rollReq);
       if (data.suggested_actions) setSuggestedActions(data.suggested_actions);
 
-      // Auto-save session state to slot
-      try {
-        const currentDiff = state.world?.difficulty || 'standard';
-        if (currentDiff === 'hardcore') {
-          saveCurrentGameToSlot('slot_hardcore', '💀 Хардкор (Ironman)', false);
-        } else {
-          saveCurrentGameToSlot(undefined, undefined, true);
-        }
-      } catch (e) {
-        console.error('Auto-save error:', e);
+      // Detect Rest & New Day events for D&D 5e rest rules and autosave
+      const lowerAction = actionText.toLowerCase();
+      const lowerNarrative = (data.narrative || '').toLowerCase();
+      const isLongRest =
+        actionText.includes('ДЛИТЕЛЬНЫЙ ОТДЫХ') ||
+        lowerAction.includes('длительный отдых') ||
+        lowerAction.includes('long rest') ||
+        lowerNarrative.includes('длительный отдых') ||
+        lowerNarrative.includes('завершили ночлег');
+
+      const isShortRest =
+        !isLongRest &&
+        (actionText.includes('КОРОТКИЙ ОТДЫХ') ||
+         lowerAction.includes('короткий отдых') ||
+         lowerAction.includes('short rest'));
+
+      const isNextDay = timeResult.nextDay > state.inGameDay;
+
+      // Rest recovery for player character
+      if (isLongRest) {
+        setCharacter((prev) => {
+          if (!prev) return prev;
+          const recoveredSlotsChar = recoverSpellSlots(prev, 'long');
+          return { ...recoveredSlotsChar, currentHp: prev.maxHp };
+        });
+      } else if (isShortRest) {
+        setCharacter((prev) => {
+          if (!prev) return prev;
+          return recoverSpellSlots(prev, 'short');
+        });
       }
+
+      // STRICT AUTOSAVE RULE: Auto-save strictly on Long Rest or at the start of a New Day
+      if (isLongRest || isNextDay) {
+        try {
+          const currentDiff = state.world?.difficulty || 'standard';
+          const reasonTag = isLongRest ? 'Длит. отдых' : 'Новый день';
+
+          if (state.isMultiplayerConnected) {
+            // Multiplayer Co-op campaign autosave
+            const coopSessionToSave: CoopSaveSession = {
+              id: `coop_active_${state.localPlayerId}`,
+              saveName: `⚡ Авто (${reasonTag}, День ${timeResult.nextDay})`,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              world: state.world,
+              partyPlayers: activePartyPlayers,
+              history: [...newHistory, dmMessage],
+              storySummary: state.storySummary,
+              inGameDay: timeResult.nextDay,
+              inGameMinutes: timeResult.nextMinutes,
+              inGameTime: updatedInGameTime,
+              partyCompanions: state.partyCompanions,
+              journalEntries: state.journalEntries,
+              camp_inventory: (state as any).camp_inventory || [],
+              unclaimed_loot: (state as any).unclaimed_loot || [],
+            };
+            triggerRestOrNewDayAutosave(coopSessionToSave, isLongRest ? 'long_rest' : 'new_day');
+          } else {
+            // Solo game autosave
+            if (currentDiff === 'hardcore') {
+              saveCurrentGameToSlot('slot_hardcore', '💀 Хардкор (Ironman)', false);
+            } else {
+              saveCurrentGameToSlot('slot_auto', `⚡ Авто (${reasonTag}, День ${timeResult.nextDay})`, true);
+            }
+          }
+        } catch (e) {
+          console.error('Rest / New Day Auto-save error:', e);
+        }
+      }
+
 
       // Broadcast DM response to all connected LAN multiplayer clients
       if (state.isMultiplayerConnected && state.isHost) {
@@ -610,7 +682,7 @@ export default function DnDApp() {
 
     if (actions.length === 1) {
       const a = actions[0];
-      const singlePrompt = `[Игрок: ${a.playerClass ? `${a.playerClass} ` : ''}${a.characterName}]: ${a.actionText}`;
+      const singlePrompt = `[Ход игрока: "${a.characterName}" | ID: "${a.playerId}" | Персонаж: ${a.characterName}${a.playerClass ? ` (${a.playerClass})` : ''}]: ${a.actionText}`;
       await executeDmTurn(singlePrompt, undefined, undefined, true);
       return;
     }
@@ -618,11 +690,11 @@ export default function DnDApp() {
     const actionsList = actions
       .map(
         (a, idx) =>
-          `${idx + 1}. [${a.playerClass ? `${a.playerClass} ` : ''}${a.characterName}]: ${a.actionText}`
+          `- Игрок ${idx + 1} ("${a.characterName}", ID: "${a.playerId}"): "${a.actionText}"`
       )
       .join('\n');
 
-    const jointActionPrompt = `[СОВМЕСТНЫЕ ДЕЙСТВИЯ ОТРЯДА В ЭТОМ РАУНДЕ (${actions.length} игроков)]:\n${actionsList}\n\nОпиши совместный результат действий всех участников отряда, реакцию мира/врагов, последствия и дальнейшее развитие событий!`;
+    const jointActionPrompt = `[СОВМЕСТНЫЙ РАУНД ОТРЯДА]:\n${actionsList}\n\nОпиши совместный результат действий всех участников отряда в рамках одной сцены, нарастающее напряжение, реакцию мира и дальнейшие события!`;
 
     // Hidden from visible chat feed - sent directly to AI DM
     await executeDmTurn(jointActionPrompt, undefined, undefined, true);
@@ -640,7 +712,8 @@ export default function DnDApp() {
           if (msg.state.inGameMinutes !== undefined) setInGameMinutes(msg.state.inGameMinutes);
           if (msg.state.pendingRoll !== undefined) setPendingRoll(msg.state.pendingRoll);
           if (msg.state.roundActions) setRoundActions(msg.state.roundActions);
-          if (msg.state.history && msg.state.history.length > 0) {
+          if (msg.state.partyCompanions) setPartyCompanions(msg.state.partyCompanions);
+          if (Array.isArray(msg.state.history)) {
             setHistory(msg.state.history);
           }
           break;
@@ -743,6 +816,13 @@ export default function DnDApp() {
           if (msg.inGameDay) setInGameDay(msg.inGameDay);
           if (msg.inGameMinutes !== undefined) setInGameMinutes(msg.inGameMinutes);
           if (msg.partyCompanions) setPartyCompanions(msg.partyCompanions);
+          if (msg.history) setHistory(msg.history);
+          break;
+
+        case 'CHAT_HISTORY_SYNC':
+          if (msg.history) {
+            setHistory(msg.history);
+          }
           break;
 
         case 'PLAYER_READY_CHANGED':
@@ -757,6 +837,21 @@ export default function DnDApp() {
           }
           if (msg.worldSettings) {
             setWorld(msg.worldSettings);
+          }
+          if (msg.history !== undefined) {
+            setHistory(msg.history);
+          }
+          if (msg.inGameDay) {
+            setInGameDay(msg.inGameDay);
+          }
+          if (msg.inGameMinutes !== undefined) {
+            setInGameMinutes(msg.inGameMinutes);
+          }
+          if (msg.partyCompanions) {
+            setPartyCompanions(msg.partyCompanions);
+          }
+          if (msg.storySummary !== undefined) {
+            setStorySummary(msg.storySummary);
           }
           setIsGameStarted(true);
           setIsLanModalOpen(false);
@@ -868,27 +963,27 @@ export default function DnDApp() {
     if (!update) return;
 
     // 1. HP changes
-    if (update.hp_change && update.hp_change !== 0) {
+    if (typeof update.hp_change === 'number' && update.hp_change !== 0) {
       if (update.hp_change > 0) playHealSound();
       else playDamageSound();
 
       setCharacter((prev) => {
         if (!prev) return prev;
-        const newHp = Math.max(0, Math.min(prev.maxHp, prev.currentHp + update.hp_change));
+        const newHp = Math.max(0, Math.min(prev.maxHp, prev.currentHp + (update.hp_change || 0)));
         return { ...prev, currentHp: newHp };
       });
     }
 
     // 2. Gold changes
-    if (update.gold_change && update.gold_change !== 0) {
+    if (typeof update.gold_change === 'number' && update.gold_change !== 0) {
       if (update.gold_change > 0) playCoinSound();
       setCharacter((prev) => {
         if (!prev) return prev;
-        return { ...prev, gold: Math.max(0, (prev.gold || 0) + update.gold_change) };
+        return { ...prev, gold: Math.max(0, (prev.gold || 0) + (update.gold_change || 0)) };
       });
     }
 
-    // 3. Experience (XP) & D&D 5e Level-Up
+    // 3. Experience (XP) & D&D 5e Level-Up Notification
     if (update.xp_change && update.xp_change !== 0) {
       setCharacter((prev) => {
         if (!prev) return prev;
@@ -897,45 +992,18 @@ export default function DnDApp() {
         const nextXp = Math.max(0, (prev.experience || 0) + awardedXp);
         const xpInfo = getLevelFromXp(nextXp);
 
-        // Check if level threshold reached
-        if (xpInfo.level > prev.level) {
-          playHealSound();
-          const hpGain = calculateHpGainOnLevelUp(prev.class, prev.stats?.con || 10);
-          const isCaster = isClassSpellcaster(prev.class);
-          const newCantrips = [...(prev.cantrips || [])];
-          const newSpells = [...(prev.spells || [])];
-
-          if (isCaster) {
-            const cantripPool = CANTRIP_SUGGESTIONS_BY_CLASS[prev.class] || [];
-            const spellPool = SPELL_SUGGESTIONS_BY_CLASS[prev.class] || [];
-            const nextCantrip = cantripPool.find((c) => !newCantrips.includes(c));
-            if (nextCantrip) newCantrips.push(nextCantrip);
-            const nextSpell = spellPool.find((s) => !newSpells.includes(s));
-            if (nextSpell) newSpells.push(nextSpell);
-          }
-
+        if (update.level_up_available || xpInfo.level > prev.level) {
           setTimeout(() => {
             setHistory((oldHist) => [
               ...oldHist,
               {
                 id: `lvl_${Date.now()}`,
                 role: 'system',
-                text: `🎉 **ПОВЫШЕНИЕ УРОВНЯ!** ${prev.name} достигает **${xpInfo.level}-го уровня**! (Получено +${awardedXp} XP, HP +${hpGain}, Бонус мастерства +${xpInfo.proficiencyBonus}${isCaster ? ', открыты новые заклинания' : ''}). Откройте лист персонажа вверху экрана, чтобы настроить способности!`,
+                text: `🎉 **НАЧИСЛЕН ОПЫТ (+${awardedXp} XP)!** ${prev.name} готов повысить уровень до **${xpInfo.level}-го**! Откройте лист персонажа вверху экрана, чтобы выбрать новые умения, характеристики и заклинания!`,
                 timestamp: Date.now(),
               },
             ]);
           }, 150);
-
-          return {
-            ...prev,
-            experience: nextXp,
-            level: xpInfo.level,
-            proficiencyBonus: xpInfo.proficiencyBonus,
-            maxHp: prev.maxHp + hpGain,
-            currentHp: prev.currentHp + hpGain,
-            cantrips: newCantrips,
-            spells: newSpells,
-          };
         }
 
         return {
@@ -945,7 +1013,7 @@ export default function DnDApp() {
       });
     }
 
-    // 3. Inventory & Equipment updates
+    // 3.5. Inventory & Equipment updates
     if (
       (update.added_items && update.added_items.length > 0) ||
       (update.removed_items && update.removed_items.length > 0)
@@ -980,9 +1048,95 @@ export default function DnDApp() {
       setLocationsVisited((prev) => (prev.includes(newLoc) ? prev : [...prev, newLoc]));
     }
 
-    // 5. Roll requirements
-    if (dmData.requires_roll?.needed) {
-      setPendingRoll(dmData.requires_roll);
+    // 4.5 Address-based party_updates for co-op players
+    if (update.party_updates) {
+      const myPatch = update.party_updates[localPlayerId];
+      if (myPatch) {
+        if (myPatch.hp_change && myPatch.hp_change !== 0) {
+          if (myPatch.hp_change > 0) playHealSound();
+          else playDamageSound();
+          setCharacter((prev) => prev ? { ...prev, currentHp: Math.max(0, Math.min(prev.maxHp, prev.currentHp + myPatch.hp_change!)) } : prev);
+        }
+        if (myPatch.gold_change && myPatch.gold_change !== 0) {
+          if (myPatch.gold_change > 0) playCoinSound();
+          setCharacter((prev) => prev ? { ...prev, gold: Math.max(0, (prev.gold || 0) + myPatch.gold_change!) } : prev);
+        }
+        if (myPatch.xp_change && myPatch.xp_change !== 0) {
+          setCharacter((prev) => {
+            if (!prev) return prev;
+            const multiplier = prev.xpMultiplier || world.xpMultiplier || 1;
+            const awardedXp = Math.round(myPatch.xp_change! * multiplier);
+            const nextXp = Math.max(0, (prev.experience || 0) + awardedXp);
+            const xpInfo = getLevelFromXp(nextXp);
+            if (myPatch.level_up_available) {
+              setTimeout(() => {
+                setHistory((oldHist) => [
+                  ...oldHist,
+                  {
+                    id: `lvl_${Date.now()}`,
+                    role: 'system',
+                    text: `🎉 **НАЧИСЛЕН ОПЫТ (+${awardedXp} XP)!** ${prev.name} готов повысить уровень до **${xpInfo.level}-го**! Откройте лист персонажа, чтобы настроить новые умения!`,
+                    timestamp: Date.now(),
+                  },
+                ]);
+              }, 150);
+            }
+            return { ...prev, experience: nextXp };
+          });
+        }
+        if (myPatch.added_items?.length || myPatch.removed_items?.length) {
+          setCharacter((prev) => {
+            if (!prev) return prev;
+            let inv = [...prev.inventory];
+            if (myPatch.added_items) {
+              for (const item of myPatch.added_items) {
+                if (item && !inv.includes(item)) inv.push(item);
+              }
+            }
+            if (myPatch.removed_items) {
+              inv = inv.filter((it) => !myPatch.removed_items!.includes(it));
+            }
+            return { ...prev, inventory: inv };
+          });
+        }
+      }
+
+      // Sync networkPlayers character states in lobby roster
+      setNetworkPlayers((prev) =>
+        prev.map((player) => {
+          const patch = update.party_updates![player.id];
+          if (!patch || !player.character) return player;
+          const char = { ...player.character };
+          if (patch.hp_change) char.currentHp = Math.max(0, Math.min(char.maxHp, char.currentHp + patch.hp_change));
+          if (patch.gold_change) char.gold = Math.max(0, (char.gold || 0) + patch.gold_change);
+          if (patch.xp_change) char.experience = Math.max(0, (char.experience || 0) + patch.xp_change);
+          if (patch.added_items) {
+            const curInv = [...char.inventory];
+            for (const item of patch.added_items) {
+              if (item && !curInv.includes(item)) curInv.push(item);
+            }
+            char.inventory = curInv;
+          }
+          if (patch.removed_items) {
+            char.inventory = char.inventory.filter((it) => !patch.removed_items!.includes(it));
+          }
+          if (patch.tactical_position) {
+            char.tactical_position = patch.tactical_position;
+          }
+          return { ...player, character: char };
+        })
+      );
+    }
+
+    // 5. Roll requirements & Multi-rolls
+    const activeRollReq = (dmData.required_rolls && dmData.required_rolls.length > 0)
+      ? dmData.required_rolls[0]
+      : dmData.requires_roll;
+
+    if (activeRollReq && 'needed' in activeRollReq && activeRollReq.needed) {
+      setPendingRoll(activeRollReq);
+    } else if (activeRollReq && !('needed' in activeRollReq) && (activeRollReq as any).dc) {
+      setPendingRoll({ needed: true, ...(activeRollReq as any) });
     } else {
       setPendingRoll(null);
     }
@@ -1189,6 +1343,7 @@ export default function DnDApp() {
         timestamp: Date.now(),
         gameTime: startInGameTime,
         stateUpdateApplied: data.state_update,
+        privateNarratives: data.private_narratives,
       };
 
       setHistory([initialMessage]);
@@ -1565,18 +1720,142 @@ export default function DnDApp() {
     playDiceRollSound();
   };
 
-  const handleLobbyStartGame = (chosenDiff?: GameDifficulty) => {
-    const nextWorld: WorldSettings = {
+  const handleCoopSessionLoaded = (coop: CoopSaveSession) => {
+    if (!coop) return;
+    if (coop.world) {
+      setWorld(coop.world);
+      setStoredWorldSettings(coop.world);
+    }
+    const loadedHistory = coop.history || [];
+    const loadedDay = coop.inGameDay || 1;
+    const loadedMinutes = coop.inGameMinutes !== undefined ? coop.inGameMinutes : 480;
+    const loadedTime = coop.inGameTime || formatInGameTime(loadedDay, loadedMinutes);
+    const loadedCompanions = coop.partyCompanions || [];
+    const loadedSummary = coop.storySummary || '';
+
+    setHistory(loadedHistory);
+    setInGameDay(loadedDay);
+    setInGameMinutes(loadedMinutes);
+    setStorySummary(loadedSummary);
+    setPartyCompanions(loadedCompanions);
+    if (coop.journalEntries) setJournalEntries(coop.journalEntries as any);
+
+    const myPlayer = coop.partyPlayers?.find((p) => p.id === localPlayerId || p.isHost);
+    if (myPlayer?.character) {
+      setCharacter(myPlayer.character);
+    } else if (coop.partyPlayers && coop.partyPlayers[0]?.character) {
+      setCharacter(coop.partyPlayers[0].character);
+    }
+
+    setIsGameStarted(true);
+    playDiceRollSound();
+
+    if (isMultiplayerConnected && isHost) {
+      lanSocket.syncChatHistory(loadedHistory);
+      lanSocket.broadcastStateSync({
+        history: loadedHistory,
+        inGameDay: loadedDay,
+        inGameMinutes: loadedMinutes,
+        inGameTime: loadedTime,
+        partyCompanions: loadedCompanions,
+      });
+    }
+  };
+
+  const handleLobbyStartGame = async (chosenDiff?: GameDifficulty, campaignSession?: CoopSaveSession | null) => {
+    let nextWorld: WorldSettings = {
       ...world,
       difficulty: chosenDiff || world.difficulty || 'standard',
     };
-    setWorld(nextWorld);
-    setStoredWorldSettings(nextWorld);
-    setIsGameStarted(true);
-    lanSocket.startGame(chosenDiff || world.difficulty, nextWorld);
-    setIsLanModalOpen(false);
-    playDiceRollSound();
+
+    if (campaignSession) {
+      // ===== LOAD EXISTING CO-OP CAMPAIGN =====
+      if (campaignSession.world) {
+        nextWorld = { ...campaignSession.world, difficulty: chosenDiff || campaignSession.world.difficulty || 'standard' };
+      }
+      const loadedHistory = campaignSession.history || [];
+      const loadedDay = campaignSession.inGameDay || 1;
+      const loadedMinutes = campaignSession.inGameMinutes !== undefined ? campaignSession.inGameMinutes : 480;
+      const loadedTime = campaignSession.inGameTime || formatInGameTime(loadedDay, loadedMinutes);
+      const loadedCompanions = campaignSession.partyCompanions || [];
+      const loadedSummary = campaignSession.storySummary || '';
+
+      setHistory(loadedHistory);
+      setInGameDay(loadedDay);
+      setInGameMinutes(loadedMinutes);
+      setStorySummary(loadedSummary);
+      setPartyCompanions(loadedCompanions);
+      if (campaignSession.journalEntries) {
+        setJournalEntries(campaignSession.journalEntries as any);
+      }
+      setWorld(nextWorld);
+      setStoredWorldSettings(nextWorld);
+      setIsGameStarted(true);
+      setIsLanModalOpen(false);
+      playDiceRollSound();
+
+      // Broadcast loaded campaign state & chat history to all connected clients in the room
+      lanSocket.startGame(chosenDiff || nextWorld.difficulty, nextWorld, {
+        isNewCampaign: false,
+        history: loadedHistory,
+        inGameDay: loadedDay,
+        inGameMinutes: loadedMinutes,
+        inGameTime: loadedTime,
+        partyCompanions: loadedCompanions,
+        storySummary: loadedSummary,
+      });
+    } else {
+      // ===== START BRAND NEW CO-OP ADVENTURE =====
+      // 1. Reset all story and chat progress to a pristine clean state
+      const startDay = 1;
+      const startMinutes = 8 * 60; // 08:00
+      const startTime = formatInGameTime(startDay, startMinutes);
+
+      setHistory([]);
+      setCurrentLocation('Начало пути');
+      setLocationsVisited(['Начало пути']);
+      setPendingRoll(null);
+      setSuggestedActions([]);
+      setRoundActions({});
+      setStorySummary('');
+      setPartyCompanions([]);
+      setJournalEntries([]);
+      setInGameDay(startDay);
+      setInGameMinutes(startMinutes);
+      setWorld(nextWorld);
+      setStoredWorldSettings(nextWorld);
+      setIsGameStarted(true);
+      setIsLanModalOpen(false);
+      playDiceRollSound();
+
+      // Notify all connected clients to start new game and clear chat history
+      lanSocket.startGame(chosenDiff || nextWorld.difficulty, nextWorld, {
+        isNewCampaign: true,
+        history: [],
+        inGameDay: startDay,
+        inGameMinutes: startMinutes,
+        inGameTime: startTime,
+        partyCompanions: [],
+        storySummary: '',
+      });
+
+      // 2. Automatically generate the opening DM narrative introducing all party members in the new chat
+      const activePlayers = networkPlayers.length > 0 ? networkPlayers : [{ name: character?.name || 'Герой', character }];
+      const partyRosterDesc = activePlayers
+        .map((p, i) => `${i + 1}. ${p.character?.name || p.name} (${p.character?.race || 'Герой'} ${p.character?.class || 'Искатель приключений'})`)
+        .join('\n');
+
+      const initialAction = nextWorld.startingScene && nextWorld.startingScene.trim().length > 0
+        ? `Начни кооперативную кампанию для отряда героев:\n${partyRosterDesc}\n\nЗаданная сцена: ${nextWorld.startingScene.trim()}`
+        : `Начни кооперативную кампанию для отряда героев:\n${partyRosterDesc}\n\nОпиши яркую завязку истории, где они находятся вместе, их окружение, и создай интригующую первую ситуацию для всей группы.`;
+
+      // Execute initial group intro DM turn
+      setTimeout(() => {
+        executeDmTurn(initialAction, undefined, undefined, false);
+      }, 250);
+    }
   };
+
 
   // Item consumption callback from character sheet (potions, scrolls, torches, water flask)
   const handleItemUsed = (itemName: string, narrativeAction?: string) => {
@@ -1797,6 +2076,7 @@ export default function DnDApp() {
                 history={history}
                 loading={loading}
                 playerName={character.name}
+                localPlayerId={localPlayerId}
                 onRetryAction={handleRetryAction}
                 onOpenSettings={() => setIsSettingsOpen(true)}
               />
@@ -1806,11 +2086,36 @@ export default function DnDApp() {
             <div className="flex-shrink-0 p-2 sm:p-4 border-t border-slate-800/80 bg-slate-950/98 z-10 shadow-lg">
               {pendingRoll && pendingRoll.needed ? (
                 (() => {
-                  const isLocalTarget =
-                    !pendingRoll.target_character_name ||
-                    (character &&
-                      (pendingRoll.target_character_name.toLowerCase().trim() === character.name.toLowerCase().trim() ||
-                        pendingRoll.target_character_id === localPlayerId));
+                  const targetName = (pendingRoll.target_character_name || '').toLowerCase().trim();
+                  const isGroupOrGeneric =
+                    !targetName ||
+                    targetName.includes('совместн') ||
+                    targetName.includes('отряд') ||
+                    targetName.includes('геро') ||
+                    targetName.includes('все') ||
+                    targetName.includes('раунд');
+
+                  const isMatchedToLocal = Boolean(
+                    character &&
+                      (targetName === character.name.toLowerCase().trim() ||
+                        targetName.includes(character.name.toLowerCase().trim()) ||
+                        character.name.toLowerCase().includes(targetName) ||
+                        pendingRoll.target_character_id === localPlayerId)
+                  );
+
+                  const hasOtherExactPartyMatch = Boolean(
+                    isMultiplayerConnected &&
+                      networkPlayers.length > 1 &&
+                      networkPlayers.some(
+                        (p) =>
+                          p.id !== localPlayerId &&
+                          (p.id === pendingRoll.target_character_id ||
+                            (p.character?.name && p.character.name.toLowerCase().trim() === targetName) ||
+                            (p.name && p.name.toLowerCase().trim() === targetName))
+                      )
+                  );
+
+                  const isLocalTarget = isMatchedToLocal || isGroupOrGeneric || !hasOtherExactPartyMatch || !isMultiplayerConnected;
 
                   if (isLocalTarget) {
                     return (
@@ -2055,6 +2360,9 @@ export default function DnDApp() {
         isOpen={isSaveLoadOpen}
         onClose={() => setIsSaveLoadOpen(false)}
         isGameStarted={isGameStarted}
+        isCoopMode={isMultiplayerConnected}
+        coopPlayers={networkPlayers}
+        onCoopSessionLoaded={handleCoopSessionLoaded}
         currentSession={{
           id: 'session_' + (character?.name || 'hero'),
           createdAt: Date.now(),
@@ -2074,6 +2382,7 @@ export default function DnDApp() {
         }}
         onSessionLoaded={handleSessionLoaded}
       />
+
 
       <CharacterCreatorModal
         isOpen={isCreatorOpen}

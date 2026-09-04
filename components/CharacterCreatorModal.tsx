@@ -34,6 +34,7 @@ import {
   isClassSpellcaster,
   CANTRIP_SUGGESTIONS_BY_CLASS,
   SPELL_SUGGESTIONS_BY_CLASS,
+  getAvailableClassFeatures,
 } from '@/lib/dndRules';
 import {
   Sparkles,
@@ -443,6 +444,8 @@ export const CharacterCreatorModal: React.FC<CharacterCreatorModalProps> = ({
       xpMultiplier: xpMultiplier,
       cantrips: finalCantrips,
       spells: finalSpells,
+      features: getAvailableClassFeatures(characterClass, 1),
+      customFeatures: getAvailableClassFeatures(characterClass, 1),
       spellSlots: isSpellcasterClass ? { level1: { max: 2, current: 2 }, "1": { max: 2, current: 2 } } : undefined,
       maxHp: computedMaxHp,
       currentHp: computedMaxHp,

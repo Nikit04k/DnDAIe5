@@ -962,6 +962,42 @@ export function getLevelFromXp(xp: number): {
   };
 }
 
+/**
+ * Distribute encounter or challenge XP evenly across living party members with world multiplier
+ */
+export function distributePartyXp(totalEncounterXp: number, partySize: number, multiplier: number = 1): number {
+  if (partySize <= 0) return 0;
+  const safeMultiplier = typeof multiplier === 'number' && multiplier > 0 ? multiplier : 1;
+  const adjustedTotal = Math.round(Math.max(0, totalEncounterXp) * safeMultiplier);
+  return Math.floor(adjustedTotal / partySize);
+}
+
+/**
+ * Check if a character has accumulated enough XP to advance to next level
+ */
+export function canAdvanceLevel(experience: number, currentLevel: number): boolean {
+  const info = getLevelFromXp(experience);
+  return info.level > currentLevel;
+}
+
+/**
+ * Check pending level up considering combat status (D&D 5e: Level Up only outside active combat)
+ */
+export function checkPendingLevelUp(
+  experience: number,
+  currentLevel: number,
+  isCombatActive: boolean = false
+): { canLevelUp: boolean; isDeferred: boolean; targetLevel: number; proficiencyBonus: number } {
+  const info = getLevelFromXp(experience);
+  const eligible = info.level > currentLevel;
+  return {
+    canLevelUp: eligible && !isCombatActive,
+    isDeferred: eligible && isCombatActive,
+    targetLevel: info.level,
+    proficiencyBonus: info.proficiencyBonus,
+  };
+}
+
 export const CLASS_HIT_DICE: Record<string, { die: number; avgHp: number; isSpellcaster: boolean }> = {
   'Воин': { die: 10, avgHp: 6, isSpellcaster: false },
   'Fighter': { die: 10, avgHp: 6, isSpellcaster: false },
@@ -999,6 +1035,270 @@ export function calculateHpGainOnLevelUp(className: string, conScore: number): n
 export function isClassSpellcaster(className: string): boolean {
   const norm = Object.keys(CLASS_HIT_DICE).find((k) => k.toLowerCase() === className.toLowerCase());
   return norm ? CLASS_HIT_DICE[norm].isSpellcaster : false;
+}
+
+/**
+ * Standard D&D 5e Full Caster Spell Slot Table (Levels 1 - 20)
+ */
+export const FULL_CASTER_SLOTS_TABLE: Record<number, Record<string, number>> = {
+  1: { '1': 2 },
+  2: { '1': 3 },
+  3: { '1': 4, '2': 2 },
+  4: { '1': 4, '2': 3 },
+  5: { '1': 4, '2': 3, '3': 2 },
+  6: { '1': 4, '2': 3, '3': 3 },
+  7: { '1': 4, '2': 3, '3': 3, '4': 1 },
+  8: { '1': 4, '2': 3, '3': 3, '4': 2 },
+  9: { '1': 4, '2': 3, '3': 3, '4': 3, '5': 1 },
+  10: { '1': 4, '2': 3, '3': 3, '4': 3, '5': 2 },
+  11: { '1': 4, '2': 3, '3': 3, '4': 3, '5': 2, '6': 1 },
+  12: { '1': 4, '2': 3, '3': 3, '4': 3, '5': 2, '6': 1 },
+  13: { '1': 4, '2': 3, '3': 3, '4': 3, '5': 2, '6': 1, '7': 1 },
+  14: { '1': 4, '2': 3, '3': 3, '4': 3, '5': 2, '6': 1, '7': 1 },
+  15: { '1': 4, '2': 3, '3': 3, '4': 3, '5': 2, '6': 1, '7': 1, '8': 1 },
+  16: { '1': 4, '2': 3, '3': 3, '4': 3, '5': 2, '6': 1, '7': 1, '8': 1 },
+  17: { '1': 4, '2': 3, '3': 3, '4': 3, '5': 2, '6': 1, '7': 1, '8': 1, '9': 1 },
+  18: { '1': 4, '2': 3, '3': 3, '4': 3, '5': 3, '6': 1, '7': 1, '8': 1, '9': 1 },
+  19: { '1': 4, '2': 3, '3': 3, '4': 3, '5': 3, '6': 2, '7': 1, '8': 1, '9': 1 },
+  20: { '1': 4, '2': 3, '3': 3, '4': 3, '5': 3, '6': 2, '7': 2, '8': 1, '9': 1 },
+};
+
+/**
+ * Standard D&D 5e Half Caster Spell Slot Table (Paladin, Ranger)
+ */
+export const HALF_CASTER_SLOTS_TABLE: Record<number, Record<string, number>> = {
+  1: {},
+  2: { '1': 2 },
+  3: { '1': 3 },
+  4: { '1': 3 },
+  5: { '1': 4, '2': 2 },
+  6: { '1': 4, '2': 2 },
+  7: { '1': 4, '2': 3 },
+  8: { '1': 4, '2': 3 },
+  9: { '1': 4, '2': 3, '3': 2 },
+  10: { '1': 4, '2': 3, '3': 2 },
+  11: { '1': 4, '2': 3, '3': 3 },
+  12: { '1': 4, '2': 3, '3': 3 },
+  13: { '1': 4, '2': 3, '3': 3, '4': 1 },
+  14: { '1': 4, '2': 3, '3': 3, '4': 1 },
+  15: { '1': 4, '2': 3, '3': 3, '4': 2 },
+  16: { '1': 4, '2': 3, '3': 3, '4': 2 },
+  17: { '1': 4, '2': 3, '3': 3, '4': 3, '5': 1 },
+  18: { '1': 4, '2': 3, '3': 3, '4': 3, '5': 1 },
+  19: { '1': 4, '2': 3, '3': 3, '4': 3, '5': 2 },
+  20: { '1': 4, '2': 3, '3': 3, '4': 3, '5': 2 },
+};
+
+/**
+ * Standard D&D 5e Warlock Pact Magic Table (Recover on Short Rest)
+ */
+export const WARLOCK_SLOTS_TABLE: Record<number, { circle: string; count: number }> = {
+  1: { circle: '1', count: 1 },
+  2: { circle: '1', count: 2 },
+  3: { circle: '2', count: 2 },
+  4: { circle: '2', count: 2 },
+  5: { circle: '3', count: 2 },
+  6: { circle: '3', count: 2 },
+  7: { circle: '4', count: 2 },
+  8: { circle: '4', count: 2 },
+  9: { circle: '5', count: 2 },
+  10: { circle: '5', count: 2 },
+  11: { circle: '5', count: 3 },
+  12: { circle: '5', count: 3 },
+  13: { circle: '5', count: 3 },
+  14: { circle: '5', count: 3 },
+  15: { circle: '5', count: 3 },
+  16: { circle: '5', count: 3 },
+  17: { circle: '5', count: 4 },
+  18: { circle: '5', count: 4 },
+  19: { circle: '5', count: 4 },
+  20: { circle: '5', count: 4 },
+};
+
+/**
+ * Initialize or synchronize character spell slots based on D&D 5e rules
+ */
+export function getInitialSpellSlots(charClass: string, level: number): CharacterSheet['spellSlots'] {
+  const normClass = charClass.trim().toLowerCase();
+  const safeLevel = Math.max(1, Math.min(20, level || 1));
+
+  if (!isClassSpellcaster(charClass)) {
+    return undefined;
+  }
+
+  const result: NonNullable<CharacterSheet['spellSlots']> = {};
+
+  if (['колдун', 'warlock'].includes(normClass)) {
+    const pact = WARLOCK_SLOTS_TABLE[safeLevel] || { circle: '1', count: 1 };
+    result[pact.circle] = { max: pact.count, current: pact.count };
+    result[`level${pact.circle}`] = { max: pact.count, current: pact.count };
+    return result;
+  }
+
+  if (['паладин', 'paladin', 'следопыт', 'ranger'].includes(normClass)) {
+    const slots = HALF_CASTER_SLOTS_TABLE[safeLevel] || {};
+    for (const [circle, count] of Object.entries(slots)) {
+      result[circle] = { max: count, current: count };
+      result[`level${circle}`] = { max: count, current: count };
+    }
+    return result;
+  }
+
+  // Full casters (Wizard, Cleric, Druid, Sorcerer, Bard)
+  const slots = FULL_CASTER_SLOTS_TABLE[safeLevel] || { '1': 2 };
+  for (const [circle, count] of Object.entries(slots)) {
+    result[circle] = { max: count, current: count };
+    result[`level${circle}`] = { max: count, current: count };
+  }
+
+  return result;
+}
+
+/**
+ * Estimate spell circle (level) from spell name (default = 1st level)
+ */
+export function getSpellCircle(spellName: string): number {
+  const l = spellName.toLowerCase();
+  if (
+    l.includes('огненный шар') ||
+    l.includes('fireball') ||
+    l.includes('ускорение') ||
+    l.includes('haste') ||
+    l.includes('контрзаклинание') ||
+    l.includes('counterspell') ||
+    l.includes('возрождение') ||
+    l.includes('revivify') ||
+    l.includes('стражи духа') ||
+    l.includes('spirit guardians') ||
+    l.includes('голод хадара') ||
+    l.includes('hunger of hadar') ||
+    l.includes('молния') ||
+    l.includes('lightning bolt')
+  ) {
+    return 3;
+  }
+  if (
+    l.includes('туманный шаг') ||
+    l.includes('misty step') ||
+    l.includes('зеркальный образ') ||
+    l.includes('отражения') ||
+    l.includes('отражение') ||
+    l.includes('mirror image') ||
+    l.includes('невидимость') ||
+    l.includes('invisibility') ||
+    l.includes('духовное оружие') ||
+    l.includes('spiritual weapon') ||
+    l.includes('тьма') ||
+    l.includes('darkness') ||
+    l.includes('паутина') ||
+    l.includes('web') ||
+    l.includes('раскаленный металл') ||
+    l.includes('палящий луч') ||
+    l.includes('scorching ray')
+  ) {
+    return 2;
+  }
+  return 1;
+}
+
+/**
+ * Check if a spellcaster can cast a spell (cantrips are always free; leveled spells check available slots)
+ */
+export function canCastSpell(
+  character: CharacterSheet,
+  spellName: string,
+  isCantrip: boolean = false
+): { canCast: boolean; reason?: string; circle: number } {
+  if (isCantrip) {
+    return { canCast: true, circle: 0 };
+  }
+
+  if (!isClassSpellcaster(character.class)) {
+    return { canCast: true, circle: 1 };
+  }
+
+  const circle = getSpellCircle(spellName);
+  const slots = character.spellSlots;
+
+  if (!slots) {
+    return { canCast: true, circle };
+  }
+
+  const slotEntry = slots[String(circle)] || slots[`level${circle}`];
+  if (!slotEntry || slotEntry.current <= 0) {
+    return {
+      canCast: false,
+      reason: `У вас закончились ячейки заклинаний ${circle}-го круга (0/${slotEntry?.max || 0})! Требуется отдых для восстановления сил.`,
+      circle,
+    };
+  }
+
+  return { canCast: true, circle };
+}
+
+
+/**
+ * Deduct a spell slot when a leveled spell is cast
+ */
+export function deductSpellSlot(character: CharacterSheet, circle: number): CharacterSheet {
+  if (circle <= 0 || !character.spellSlots) {
+    return character;
+  }
+
+  const updatedSlots = { ...character.spellSlots };
+  const key = String(circle);
+  const legacyKey = `level${circle}`;
+
+  const target = updatedSlots[key] || updatedSlots[legacyKey] || updatedSlots['1'] || updatedSlots['level1'];
+  if (target && target.current > 0) {
+    const nextCurrent = Math.max(0, target.current - 1);
+    updatedSlots[key] = { ...target, current: nextCurrent };
+    updatedSlots[legacyKey] = { ...target, current: nextCurrent };
+  }
+
+  return {
+    ...character,
+    spellSlots: updatedSlots,
+  };
+}
+
+/**
+ * Recover spell slots based on D&D 5e rest rules:
+ * - Long Rest: recovers all spell slots for all classes
+ * - Short Rest: recovers Pact Magic slots for Warlocks and Arcane Recovery for Wizards
+ */
+export function recoverSpellSlots(character: CharacterSheet, restType: 'short' | 'long'): CharacterSheet {
+  if (!character.spellSlots) {
+    return character;
+  }
+
+  const normClass = character.class.trim().toLowerCase();
+  const isWarlock = ['колдун', 'warlock'].includes(normClass);
+  const isWizard = ['волшебник', 'wizard'].includes(normClass);
+
+  if (restType === 'short' && !isWarlock && !isWizard) {
+    return character;
+  }
+
+  const updatedSlots = { ...character.spellSlots };
+
+  for (const [k, rawSlot] of Object.entries(updatedSlots)) {
+    const slot = rawSlot as { current: number; max: number } | undefined;
+    if (slot && typeof slot.max === 'number') {
+      if (restType === 'long' || isWarlock) {
+        updatedSlots[k] = { ...slot, current: slot.max };
+      } else if (restType === 'short' && isWizard) {
+        // Arcane Recovery: recover up to half level in slot circles (at least 1)
+        updatedSlots[k] = { ...slot, current: Math.min(slot.max, slot.current + 1) };
+      }
+    }
+  }
+
+
+  return {
+    ...character,
+    spellSlots: updatedSlots,
+  };
 }
 
 export const CANTRIP_SUGGESTIONS_BY_CLASS: Record<string, string[]> = {
@@ -1090,3 +1390,117 @@ export function getCoverAcBonus(cover?: 'none' | 'half' | 'three_quarters' | 'fu
   if (cover === 'three_quarters') return 5;
   return 0;
 }
+
+export interface DndFeatureDef {
+  id: string;
+  name: string;
+  level: number;
+  description: string;
+  source: string;
+}
+
+export const DND_CLASS_FEATURES: Record<string, DndFeatureDef[]> = {
+  'Воин': [
+    { id: 'f_second_wind', name: 'Второе дыхание (Second Wind)', level: 1, source: 'Класс: Воин (1 ур.)', description: 'В свой ход бонусным действием восстановите 1d10 + уровень воина HP (раз за короткий/длинный отдых).' },
+    { id: 'f_style_archery', name: 'Боевой стиль: Стрельба', level: 1, source: 'Класс: Воин (1 ур.)', description: '+2 к броскам атаки дальнобойным оружием.' },
+    { id: 'f_style_defense', name: 'Боевой стиль: Оборона', level: 1, source: 'Класс: Воин (1 ур.)', description: '+1 к Классу Брони при ношении любого доспеха.' },
+    { id: 'f_style_dueling', name: 'Боевой стиль: Дуэлянт', level: 1, source: 'Класс: Воин (1 ур.)', description: '+2 к урону при удержании оружия только в одной руке.' },
+    { id: 'f_style_great_weapon', name: 'Боевой стиль: Двуручное оружие', level: 1, source: 'Класс: Воин (1 ур.)', description: 'Переброс 1 и 2 на костях урона двуручным или универсальным оружием.' },
+    { id: 'f_action_surge', name: 'Всплеск действий (Action Surge)', level: 2, source: 'Класс: Воин (2 ур.)', description: 'Совершите одно дополнительное действие в свой ход (раз за короткий/длинный отдых).' },
+    { id: 'f_champion_crit', name: 'Улучшенные критические удары (Чемпион)', level: 3, source: 'Архетип: Чемпион (3 ур.)', description: 'Бросок атаки оружием наносит критический удар при выпадении 19 или 20 на d20.' },
+    { id: 'f_battlemaster_maneuvers', name: 'Мастер боевых искусств: Маневры', level: 3, source: 'Архетип: Мастер (3 ур.)', description: '4 кости превосходства d8 для маневров (Обезоруживание, Парирование, Провокация).' },
+    { id: 'f_eldritch_magic', name: 'Рыцарь-мистик: Магия воплощения', level: 3, source: 'Архетип: Рыцарь-мистик (3 ур.)', description: 'Изучение 2 фокусов и заклинаний 1-го круга школы Ограждения и Воплощения.' },
+    { id: 'f_extra_attack', name: 'Дополнительная атака (Extra Attack)', level: 5, source: 'Класс: Воин (5 ур.)', description: 'Вы можете совершить две атаки вместо одной при выборе действия Атака.' },
+  ],
+  'Варвар': [
+    { id: 'b_rage', name: 'Ярость (Rage)', level: 1, source: 'Класс: Варвар (1 ур.)', description: '+2 к урону ближнего боя с СИЛ, преимущество на проверки СИЛ, сопротивление дробящему, колющему и рубящему урону.' },
+    { id: 'b_unarmored_def', name: 'Защита без доспехов', level: 1, source: 'Класс: Варвар (1 ур.)', description: 'КД = 10 + модификатор ЛОВ + модификатор ТЕЛ (можно носить щит).' },
+    { id: 'b_reckless', name: 'Безрассудная атака (Reckless Attack)', level: 2, source: 'Класс: Варвар (2 ур.)', description: 'Преимущество на все свои броски атаки СИЛ в ход ценой преимущества на атаки врагов по вам.' },
+    { id: 'b_danger_sense', name: 'Чувство опасности (Danger Sense)', level: 2, source: 'Класс: Варвар (2 ур.)', description: 'Преимущество на спасброски Ловкости от видимых эффектов (ловушек и заклинаний).' },
+    { id: 'b_totem_bear', name: 'Тотем Медведя (Путь Тотема)', level: 3, source: 'Архетип: Тотемный воин (3 ур.)', description: 'В ярости сопротивление ВСЕМ видам урона кроме урона психической энергией.' },
+    { id: 'b_berserk_frenzy', name: 'Бешенство (Путь Берсерка)', level: 3, source: 'Архетип: Берсерк (3 ур.)', description: 'В ярости совершайте дополнительную атаку бонусным действием каждый ход.' },
+    { id: 'b_extra_attack', name: 'Дополнительная атака (Extra Attack)', level: 5, source: 'Класс: Варвар (5 ур.)', description: 'Вы можете совершить две атаки вместо одной в свой ход.' },
+    { id: 'b_fast_movement', name: 'Быстрое передвижение', level: 5, source: 'Класс: Варвар (5 ур.)', description: '+10 футов к базовой скорости передвижения без тяжелых доспехов.' },
+  ],
+  'Плут': [
+    { id: 'r_sneak_attack', name: 'Скрытная атака (Sneak Attack)', level: 1, source: 'Класс: Плут (1 ур.)', description: '+1d6 (и более) доп. урона раз в ход фехтовальным/дальнобойным оружием при преимуществе или союзнике рядом.' },
+    { id: 'r_thieves_cant', name: 'Воровской жаргон (Thieves\' Cant)', level: 1, source: 'Класс: Плут (1 ур.)', description: 'Знание тайного языка жестов и диалекта преступного мира.' },
+    { id: 'r_expertise', name: 'Компетентность (Expertise)', level: 1, source: 'Класс: Плут (1 ур.)', description: 'Удвоение бонуса мастерства для двух выбранных навыков или воровских инструментов.' },
+    { id: 'r_cunning_action', name: 'Хитрое действие (Cunning Action)', level: 2, source: 'Класс: Плут (2 ур.)', description: 'Совершайте действие Рывок, Отход или Засада бонусным действием каждый ход.' },
+    { id: 'r_assassin_ambush', name: 'Ликвидация (Архетип Убийца)', level: 3, source: 'Архетип: Убийца (3 ур.)', description: 'Преимущество по существам, еще не ходившим в бою, и автоматический крит при застилании врасплох.' },
+    { id: 'r_thief_hands', name: 'Быстрые руки (Архетип Вор)', level: 3, source: 'Архетип: Вор (3 ур.)', description: 'Ловкость рук, взлом и использование предметов бонусным действием.' },
+    { id: 'r_uncanny_dodge', name: 'Невероятное уклонение (Uncanny Dodge)', level: 5, source: 'Класс: Плут (5 ур.)', description: 'Реакцией уменьшите получаемый урон от видимой атаки вдвое.' },
+  ],
+  'Волшебник': [
+    { id: 'w_arcane_recovery', name: 'Магическое восстановление (Arcane Recovery)', level: 1, source: 'Класс: Волшебник (1 ур.)', description: 'На коротком отдыхе восстановите ячейки заклинаний с суммарным кругом до половины уровня (округление вверх).' },
+    { id: 'w_sculpt_spells', name: 'Формирование заклинаний (Школа Воплощения)', level: 2, source: 'Архетип: Воплощение (2 ур.)', description: 'Создавайте безопасные зоны для союзников в области взрывов ваших заклинаний (Огненный шар не ранит друзей).' },
+    { id: 'w_arcane_ward', name: 'Чародейский щит (Школа Ограждения)', level: 2, source: 'Архетип: Ограждение (2 ур.)', description: 'Магический барьер с HP = 2*lvl + INT, поглощающий входящий урон.' },
+    { id: 'w_grim_harvest', name: 'Мрачная жатва (Школа Некромантии)', level: 2, source: 'Архетип: Некромантия (2 ур.)', description: 'Восстановление HP при убийстве существа заклинанием.' },
+  ],
+  'Жрец': [
+    { id: 'c_disciple_life', name: 'Ученик Жизни (Домен Жизни)', level: 1, source: 'Домен: Жизнь (1 ур.)', description: 'Ваши исцеляющие заклинания восстанавливают дополнительно 2 + круг заклинания HP.' },
+    { id: 'c_channel_divinity', name: 'Божественный канал: Изгнание нежити', level: 2, source: 'Класс: Жрец (2 ур.)', description: 'Нежить в радиусе 30 футов обращается в бегство при провале спасброска Мудрости.' },
+    { id: 'c_preserve_life', name: 'Сохранение жизни (Домен Жизни)', level: 2, source: 'Домен: Жизнь (2 ур.)', description: 'Пул исцеления = 5 * уровень жреца, распределяемый между ранеными союзниками.' },
+    { id: 'c_destroy_undead', name: 'Уничтожение нежити', level: 5, source: 'Класс: Жрец (5 ур.)', description: 'Нежить с опасностью 1/2 и ниже уничтожается на месте при провале изгнания.' },
+  ],
+  'Паладин': [
+    { id: 'p_divine_sense', name: 'Божественное чувство (Divine Sense)', level: 1, source: 'Класс: Паладин (1 ур.)', description: 'Определение присутствия нежити, небожителей и исчадий в радиусе 60 футов.' },
+    { id: 'p_lay_on_hands', name: 'Наложение рук (Lay on Hands)', level: 1, source: 'Класс: Паладин (1 ур.)', description: 'Пул целебной силы = 5 * уровень паладина для лечения ран или нейтрализации ядов/болезней (5 очков).' },
+    { id: 'p_divine_smite', name: 'Божественная кара (Divine Smite)', level: 2, source: 'Класс: Паладин (2 ур.)', description: 'При попадании оружием потратьте ячейку заклинания для нанесения +2d8 (1 круг) излучением (+1d8 по нежити/исчадиям).' },
+    { id: 'p_divine_health', name: 'Божественное здоровье', level: 3, source: 'Класс: Паладин (3 ур.)', description: 'Полный иммунитет ко всем болезням.' },
+    { id: 'p_extra_attack', name: 'Дополнительная атака (Extra Attack)', level: 5, source: 'Класс: Паладин (5 ур.)', description: 'Две атаки вместо одной при действии Атака.' },
+  ],
+  'Следопыт': [
+    { id: 'rg_favored_enemy', name: 'Избранный враг (Favored Enemy)', level: 1, source: 'Класс: Следопыт (1 ур.)', description: 'Преимущество на выслеживание и знание языка выбранного типа существ (гоблины, нежить, драконы).' },
+    { id: 'rg_natural_explorer', name: 'Исследователь природы', level: 1, source: 'Класс: Следопыт (1 ур.)', description: 'Игнорирование труднопроходимой местности, группа не может заблудиться в избранной биоме.' },
+    { id: 'rg_colossus_slayer', name: 'Убийца колоссов (Охотник)', level: 3, source: 'Архетип: Охотник (3 ур.)', description: '+1d8 урона оружием раз в ход по цели, у которой HP ниже максимума.' },
+    { id: 'rg_extra_attack', name: 'Дополнительная атака', level: 5, source: 'Класс: Следопыт (5 ур.)', description: 'Две атаки за ход.' },
+  ],
+  'Бард': [
+    { id: 'bd_inspiration', name: 'Вдохновение барда (Bardic Inspiration: 1d6)', level: 1, source: 'Класс: Бард (1 ур.)', description: 'Бонусным действием даруйте союзнику кость вдохновения к атаке, проверке или спасброску.' },
+    { id: 'bd_jack_of_trades', name: 'Мастер на все руки (Jack of All Trades)', level: 2, source: 'Класс: Бард (2 ур.)', description: '+Половина бонуса мастерства ко всем проверкам характеристик без владения навыком.' },
+    { id: 'bd_song_rest', name: 'Песнь отдыха (Song of Rest: 1d6)', level: 2, source: 'Класс: Бард (2 ур.)', description: 'Союзники восстанавливают дополнительно 1d6 HP при трате костей хитов на коротком отдыхе.' },
+  ],
+  'Друид': [
+    { id: 'd_wild_shape', name: 'Дикий облик (Wild Shape)', level: 2, source: 'Класс: Друид (2 ур.)', description: 'Превращение в зверей (волк, паук, медведь) 2 раза за отдых с получением их HP и атак.' },
+    { id: 'd_moon_combat', name: 'Боевой дикий облик (Круг Луны)', level: 2, source: 'Архетип: Круг Луны (2 ур.)', description: 'Превращение бонусным действием в мощных зверей с опасностью 1 (Бурый медведь, Лютоволк).' },
+  ],
+  'Монах': [
+    { id: 'm_martial_arts', name: 'Боевые искусства (Martial Arts: 1d4)', level: 1, source: 'Класс: Монах (1 ур.)', description: 'Использование ЛОВ вместо СИЛ для атак и безоружный удар бонусным действием.' },
+    { id: 'm_ki', name: 'Энергия Ци (Ki: Шквал ударов / Защита / Поступь)', level: 2, source: 'Класс: Монах (2 ур.)', description: 'Очки Ци для 2 доп. ударов, уклонения или отхода бонусным действием.' },
+    { id: 'm_deflect_missiles', name: 'Отражение снарядов (Deflect Missiles)', level: 3, source: 'Класс: Монах (3 ур.)', description: 'Реакцией поймайте или снизьте урон от стрелы/снаряда на 1d10 + ЛОВ + уровень.' },
+    { id: 'm_stunning_strike', name: 'Ошеломляющий удар (Stunning Strike)', level: 5, source: 'Класс: Монах (5 ур.)', description: 'При попадании потратьте 1 Ци: цель ошеломлена до конца вашего след. хода при провале спасброска ТЕЛ.' },
+  ],
+  'Чародей': [
+    { id: 's_dragon_resilience', name: 'Драконья устойчивость (Драконья кровь)', level: 1, source: 'Происхождение (1 ур.)', description: 'КД = 13 + ЛОВ без доспеха и +1 HP за каждый уровень чародея.' },
+    { id: 's_font_magic', name: 'Источник магии (Font of Magic)', level: 2, source: 'Класс: Чародей (2 ур.)', description: 'Очки чародейства для преобразования ячеек заклинаний.' },
+    { id: 's_metamagic_twin', name: 'Метамагия: Удвоенное заклинание', level: 3, source: 'Класс: Чародей (3 ур.)', description: 'Заклинание с одной целью действует сразу на двух существ.' },
+    { id: 's_metamagic_quick', name: 'Метамагия: Быстрое заклинание', level: 3, source: 'Класс: Чародей (3 ур.)', description: 'Сотворение заклинания с базовым временем 1 действие за 1 бонусное действие.' },
+  ],
+  'Колдун': [
+    { id: 'wl_dark_blessing', name: 'Благословение Темного (Покровитель Исчадие)', level: 1, source: 'Покровитель: Исчадие (1 ур.)', description: 'Получение временных HP = ХАР + уровень колдуна при снижении врага до 0 HP.' },
+    { id: 'wl_agonizing_blast', name: 'Мучительный взрыв (Таинственное воззвание)', level: 2, source: 'Воззвание (2 ур.)', description: 'Добавляйте модификатор Харизмы к урону каждого луча Мистического Заряда.' },
+    { id: 'wl_pact_blade', name: 'Договор Клинка (Pact of the Blade)', level: 3, source: 'Договор (3 ур.)', description: 'Призыв магического оружия любого типа в руку действием.' },
+  ],
+};
+
+export const DND_FEATS: DndFeatureDef[] = [
+  { id: 'feat_sharpshooter', name: 'Меткий стрелок (Sharpshooter)', level: 4, source: 'Черта (Feat)', description: 'Атаки дальнобойным оружием игнорируют укрытия на 1/2 и 3/4. Можно взять штраф -5 к броску атаки ради +10 к урону.' },
+  { id: 'feat_gwm', name: 'Мастер боевого оружия (Great Weapon Master)', level: 4, source: 'Черта (Feat)', description: 'Крит или добивание врага дает бонусную атаку. Штраф -5 к атаке двуручным оружием ради +10 к урону.' },
+  { id: 'feat_alert', name: 'Бдительный (Alert)', level: 4, source: 'Черта (Feat)', description: '+5 к инициативе, вас нельзя застать врасплох, враги не получают преимущество из скрытности.' },
+  { id: 'feat_tough', name: 'Крепкий орешек (Tough)', level: 4, source: 'Черта (Feat)', description: 'Максимум HP увеличивается на 2 за каждый уровень персонажа (+2*Level HP).' },
+  { id: 'feat_lucky', name: 'Счастливчик (Lucky)', level: 4, source: 'Черта (Feat)', description: '3 очка удачи в день для переброса любого d20 (атаки, проверки, спасброска) или атаки врага по вам.' },
+  { id: 'feat_warcaster', name: 'Боевой заклинатель (War Caster)', level: 4, source: 'Черта (Feat)', description: 'Преимущество на спасброски ТЕЛ для удержания концентрации, сотворение заклинаний со щитом и заклинание реакцией.' },
+  { id: 'feat_sentinel', name: 'Страж (Sentinel)', level: 4, source: 'Черта (Feat)', description: 'Попадание провоцированной атакой снижает скорость врага до 0. Атака реакцией при нападении врага на союзника рядом.' },
+  { id: 'feat_observant', name: 'Наблюдательный (Observant)', level: 4, source: 'Черта (Feat)', description: '+1 к Интеллекту или Мудрости, +5 к пассивной Внимательности и Анализу, чтение по губам.' },
+];
+
+/**
+ * Get available class features for a given class and level
+ */
+export function getAvailableClassFeatures(charClass: string, level: number): DndFeatureDef[] {
+  const norm = charClass.trim();
+  const features = DND_CLASS_FEATURES[norm] || [];
+  return features.filter((f) => f.level <= level);
+}
+

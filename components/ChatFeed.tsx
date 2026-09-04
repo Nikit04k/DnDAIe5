@@ -17,6 +17,9 @@ import {
   RotateCcw,
   AlertTriangle,
   Settings,
+  Eye,
+  Lock,
+  ShieldAlert,
 } from 'lucide-react';
 import { playEdgeTts, stopTtsAudio, subscribeTtsState } from '@/lib/edgeTts';
 import { getStoredTtsVoice, getStoredTtsSpeed, getStoredTtsVolume } from '@/lib/storage';
@@ -25,6 +28,7 @@ interface ChatFeedProps {
   history: ChatMessage[];
   loading: boolean;
   playerName: string;
+  localPlayerId?: string;
   onRetryAction?: (failedAction: string) => void;
   onOpenSettings?: () => void;
 }
@@ -72,6 +76,7 @@ export const ChatFeed: React.FC<ChatFeedProps> = ({
   history,
   loading,
   playerName,
+  localPlayerId,
   onRetryAction,
   onOpenSettings,
 }) => {
@@ -168,7 +173,7 @@ export const ChatFeed: React.FC<ChatFeedProps> = ({
 
     return (
       <div className="flex flex-wrap gap-1.5 pt-2 border-t border-slate-800/60 mt-3">
-        {stateUpdate.hp_change !== 0 && (
+        {typeof stateUpdate.hp_change === 'number' && stateUpdate.hp_change !== 0 && (
           <span
             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold ${
               stateUpdate.hp_change > 0
@@ -183,7 +188,7 @@ export const ChatFeed: React.FC<ChatFeedProps> = ({
           </span>
         )}
 
-        {stateUpdate.gold_change !== 0 && (
+        {typeof stateUpdate.gold_change === 'number' && stateUpdate.gold_change !== 0 && (
           <span
             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold ${
               stateUpdate.gold_change > 0
@@ -367,6 +372,49 @@ export const ChatFeed: React.FC<ChatFeedProps> = ({
                         <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30">
                           ⏳ Ожидание броска
                         </span>
+                      </div>
+                    )}
+
+                    {/* Private Narratives / Whispers Section */}
+                    {msg.privateNarratives && msg.privateNarratives.length > 0 && (
+                      <div className="mt-3 space-y-2">
+                        {msg.privateNarratives.map((pn, pIdx) => {
+                          const isForMe = !localPlayerId || pn.target_player_id === localPlayerId;
+                          if (isForMe) {
+                            return (
+                              <div
+                                key={pIdx}
+                                className="p-3.5 rounded-xl bg-gradient-to-r from-purple-950/90 via-slate-900 to-indigo-950/80 border border-purple-500/70 shadow-lg shadow-purple-950/50 text-xs"
+                              >
+                                <div className="flex items-center justify-between gap-2 mb-2 pb-1.5 border-b border-purple-500/30">
+                                  <span className="flex items-center gap-1.5 font-cinzel font-bold text-purple-300">
+                                    <Eye className="w-3.5 h-3.5 text-purple-400 animate-pulse" />
+                                    <span>🤫 Тайное знание (Только для вас)</span>
+                                  </span>
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] uppercase font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                                    Секрет
+                                  </span>
+                                </div>
+                                <p className="text-purple-100 font-medium leading-relaxed italic">
+                                  {pn.text}
+                                </p>
+                              </div>
+                            );
+                          } else {
+                            return (
+                              <div
+                                key={pIdx}
+                                className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/80 text-xs text-slate-500 flex items-center justify-between gap-2 italic"
+                              >
+                                <span className="flex items-center gap-1.5">
+                                  <Lock className="w-3.5 h-3.5 text-slate-600" />
+                                  <span>Мастер шепнул скрытую тайну другому игроку отряда</span>
+                                </span>
+                                <span className="text-[10px] text-slate-600 font-mono">[Скрыто]</span>
+                              </div>
+                            );
+                          }
+                        })}
                       </div>
                     )}
 

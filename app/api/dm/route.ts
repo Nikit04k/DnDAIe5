@@ -1,9 +1,21 @@
-﻿import { NextRequest, NextResponse } from 'next/server';
-import { CharacterSheet, WorldSettings, ChatMessage, DmResponse, PartyCompanion, LorebookEntry, GameDifficulty } from '@/types/dnd';
-import { buildDifficultyPrompt, getDifficultyDC, getRestRules } from '@/lib/difficultySettings';
+import { NextRequest, NextResponse } from 'next/server';
+import { CharacterSheet, WorldSettings, ChatMessage, DmResponse, PartyCompanion, LorebookEntry, GameDifficulty, DmRollRequest, CharacterStatePatch, DmStateUpdate } from '@/types/dnd';
+import { buildDifficultyPrompt, getDifficultyDC, getRestRules, DND_REST_CONSTANTS } from '@/lib/difficultySettings';
 import { parseAndAdvanceTime } from '@/lib/timeUtils';
-import { checkLevelUp, CLASS_HIT_DICE, calculatePassiveScore, getCoverAcBonus, getAbilityModifier } from '@/lib/dndRules';
+import {
+  checkLevelUp,
+  checkPendingLevelUp,
+  distributePartyXp,
+  getLevelFromXp,
+  canAdvanceLevel,
+  CLASS_HIT_DICE,
+  calculatePassiveScore,
+  getCoverAcBonus,
+  getAbilityModifier,
+} from '@/lib/dndRules';
 
+
+import { parseGmOverrideCommands } from '@/lib/gmOverrides';
 
 function enrichStateUpdateFromNarrative(
   parsed: DmResponse,
@@ -23,7 +35,41 @@ function enrichStateUpdateFromNarrative(
       removed_items: [],
       location_name: '',
       time_passed_minutes: 15,
+      party_updates: {},
+      camp_stash_updates: { added_items: [], removed_items: [] },
+      p2p_transfers: [],
     };
+  }
+
+  if (!parsed.state_update.party_updates) {
+    parsed.state_update.party_updates = {};
+  }
+  if (!parsed.state_update.camp_stash_updates) {
+    parsed.state_update.camp_stash_updates = { added_items: [], removed_items: [] };
+  }
+  if (!parsed.state_update.p2p_transfers) {
+    parsed.state_update.p2p_transfers = [];
+  }
+  if (!parsed.unclaimed_loot) {
+    parsed.unclaimed_loot = [];
+  }
+  if (!parsed.private_narratives) {
+    parsed.private_narratives = [];
+  }
+
+  // Extract action author metadata if present (supports joint co-op format)
+  let actionAuthorName = '';
+  let actingPlayerId = '';
+  const authorMatch = actionText.match(/(?:\[(?:Ход игрока|Игрок(?:\s+\d+)?):\s*"?([^"|\]\n:]+)"?\s*\|\s*ID:\s*"([^"]+)")/i);
+  if (authorMatch && !/совместн|раунд|отряд|действи/i.test(authorMatch[1])) {
+    actionAuthorName = authorMatch[1].trim();
+    actingPlayerId = authorMatch[2].trim();
+  } else if (partyPlayers.length > 0) {
+    actionAuthorName = partyPlayers[0].character?.name || partyPlayers[0].name || '';
+    actingPlayerId = partyPlayers[0].id || '';
+  } else if (currentCharacter) {
+    actionAuthorName = currentCharacter.name || '';
+    actingPlayerId = currentCharacter.id || 'player';
   }
 
   const text = rawNarrative || parsed.narrative || '';
@@ -171,14 +217,19 @@ function enrichStateUpdateFromNarrative(
     }
   }
 
-  // Determine acting player name from actionText (e.g. "[Игрок: Воин Торгрим]: ..." or "[Торгрим]: ...")
-  let actionAuthorName = '';
-  const authorMatch = actionText.match(/\[(?:Игрок: )?([^\]\n:]+)(?::|\s*\])/i);
-  if (authorMatch && authorMatch[1]) {
-    actionAuthorName = authorMatch[1].replace(/^(?:Воин|Маг|Плут|Жрец|Паладин|Следопыт|Варвар|Бард|Друид|Колдун|Чародей|Монах)\s+/i, '').trim();
+  // Determine acting player name from actionText fallback if not found yet
+  if (!actionAuthorName || /совместн|раунд|отряд|действи/i.test(actionAuthorName)) {
+    actionAuthorName = '';
+    const fallbackAuthorMatch = actionText.match(/\[(?:Ход игрока|Игрок(?:\s+\d+)?):\s*"?([^"|\]\n:]+)"?/i);
+    if (fallbackAuthorMatch && fallbackAuthorMatch[1] && !/совместн|раунд|отряд|действи/i.test(fallbackAuthorMatch[1])) {
+      actionAuthorName = fallbackAuthorMatch[1].replace(/^(?:Воин|Маг|Плут|Жрец|Паладин|Следопыт|Варвар|Бард|Друид|Колдун|Чародей|Монах)\s+/i, '').trim();
+    }
+  }
+  if (!actionAuthorName && partyPlayers.length > 0) {
+    actionAuthorName = partyPlayers[0].character?.name || partyPlayers[0].name || '';
   }
 
-  // 5. Extract requires_roll if needed is false but action or narrative implies an attempt/skill check
+  // 5. If player has just performed a roll (action contains dice emoji or roll result), ensure we don't immediately force another roll unless LLM explicitly requested it
   const isAlreadyRoll =
     actionText.includes('[бросок') ||
     actionText.includes('[свободный бросок') ||
@@ -188,234 +239,30 @@ function enrichStateUpdateFromNarrative(
     actionText.includes('итого:') ||
     actionText.includes('d20 =');
 
-  if (!isAlreadyRoll && (!parsed.requires_roll || !parsed.requires_roll.needed)) {
-    const combinedSearch = `${actionText}\n${text}`;
-
-    const isSurvival = /кост[её]р|разжечь|палк(?:ой|у)\s+о\s+палк|привал|шалаш|укрыти[ея]|выживан|охот|пищ|следопыт|дич|собрать\s+ветк|ночлег\s+в\s+лесу|добыть\s+огонь|развести\s+огонь|поиск\s+воды|ориентир|попробую.*(ветк|огонь|ночлег|привал|шалаш)/i.test(combinedSearch);
-    const isAttack = /(?:совершите|сделайте|бросьте|проверка)\s+(?:атаку|бросок атаки)|атакуйте|атакую|нападаю|рублю|стреляю|бью клинком|ударю/i.test(combinedSearch);
-    const isPerception = /(?:внимательност|восприяти|perception|осмотр|исследован|поиск)/i.test(combinedSearch) && /(?:брос|проверк|киньте|кубик|d20|попробую|пытаюсь|хочу)/i.test(combinedSearch);
-    const isInvestigation = /(?:анализ|расследовани|поиск\s+тайник|investigation|обыск|исследовать\s+руин|разгадать)/i.test(combinedSearch) && /(?:брос|проверк|киньте|d20|попробую|пытаюсь)/i.test(combinedSearch);
-    const isStealth = /(?:скрытност|stealth|прокраст|подкраст|спрятат|скрадыва|красться)/i.test(combinedSearch);
-    const isSleightOfHand = /(?:ловкость\s+рук|взлом|отмычк|карманн|украст|стащит|спрятать\s+в\s+рукав)/i.test(combinedSearch);
-    const isAthletics = /(?:атлетик|прыж|карабкан|силов|вскарабкат|залезть|выбить\s+двер|переплыт|поднять\s+тяжест)/i.test(combinedSearch);
-    const isAcrobatics = /(?:акробатик|равновеси|сальто|увернут|пролезть|кувырок)/i.test(combinedSearch);
-    const isAnimalHandling = /(?:прируч|успокоить\s+звер|коня|лошад|волк|животн|оседлать)/i.test(combinedSearch);
-    const isInsight = /(?:проницательност|понять\s+врет|распознать\s+ложь|мотив|намерени|раскусить)/i.test(combinedSearch);
-    const isMedicine = /(?:медицин|перевязать|раны|остановить\s+кров|лечени|осмотр\s+труп|первая\s+помощь)/i.test(combinedSearch);
-    const isNature = /(?:природ|растени|травы|ягод|грибы|повадки\s+звер|флор|фаун)/i.test(combinedSearch);
-    const isArcana = /(?:маги[яи]|руны|заклинани|артефакт|портал|опознать\s+магию)/i.test(combinedSearch);
-    const isHistory = /(?:истори[яи]|древн|легенд|королевств|герб)/i.test(combinedSearch);
-    const isReligion = /(?:религи[яи]|бог[а-я]|культ|молитв|храм|нежить)/i.test(combinedSearch);
-    const isPersuasion = /(?:убеждени|уговорит|договорит|торг|убедить)/i.test(combinedSearch) && /(?:брос|проверк|киньте|d20|попробую|пытаюсь)/i.test(combinedSearch);
-    const isDeception = /(?:обман|солгат|притворит|соврать|блеф)/i.test(combinedSearch);
-    const isIntimidation = /(?:запугиван|угроз|надавит|испугат)/i.test(combinedSearch);
-    const isSavingThrow = /спасбросок/i.test(combinedSearch);
-
-    const easyDC = getDifficultyDC(difficulty, 'easy');
-    const medDC = getDifficultyDC(difficulty, 'medium');
-    const hardDC = getDifficultyDC(difficulty, 'hard');
-
-    if (isSurvival) {
-      parsed.requires_roll = {
-        needed: true,
-        roll_type: 'skill_check',
-        skill: 'Survival',
-        ability: 'WIS',
-        dc: easyDC,
-        reason: 'Проверка Выживания (Survival) для обустройства лагеря и разведения огня',
-        advantage_type: 'normal',
-      };
-    } else if (isAttack) {
-      parsed.requires_roll = {
-        needed: true,
-        roll_type: 'attack_roll',
-        ability: 'STR',
-        dc: medDC,
-        reason: 'Бросок атаки по противнику',
-        advantage_type: 'normal',
-      };
-    } else if (isStealth) {
-      parsed.requires_roll = {
-        needed: true,
-        roll_type: 'skill_check',
-        skill: 'Stealth',
-        ability: 'DEX',
-        dc: medDC,
-        reason: 'Проверка Скрытности (Stealth) при перемещении',
-        advantage_type: 'normal',
-      };
-    } else if (isSleightOfHand) {
-      parsed.requires_roll = {
-        needed: true,
-        roll_type: 'skill_check',
-        skill: 'Sleight of Hand',
-        ability: 'DEX',
-        dc: hardDC,
-        reason: 'Проверка Ловкости рук (Sleight of Hand)',
-        advantage_type: 'normal',
-      };
-    } else if (isAthletics) {
-      parsed.requires_roll = {
-        needed: true,
-        roll_type: 'skill_check',
-        skill: 'Athletics',
-        ability: 'STR',
-        dc: medDC,
-        reason: 'Проверка Атлетики (Athletics) для преодоления препятствия',
-        advantage_type: 'normal',
-      };
-    } else if (isAcrobatics) {
-      parsed.requires_roll = {
-        needed: true,
-        roll_type: 'skill_check',
-        skill: 'Acrobatics',
-        ability: 'DEX',
-        dc: medDC,
-        reason: 'Проверка Акробатики (Acrobatics)',
-        advantage_type: 'normal',
-      };
-    } else if (isAnimalHandling) {
-      parsed.requires_roll = {
-        needed: true,
-        roll_type: 'skill_check',
-        skill: 'Animal Handling',
-        ability: 'WIS',
-        dc: easyDC,
-        reason: 'Проверка Ухода за животными (Animal Handling)',
-        advantage_type: 'normal',
-      };
-    } else if (isPerception) {
-      parsed.requires_roll = {
-        needed: true,
-        roll_type: 'skill_check',
-        skill: 'Perception',
-        ability: 'WIS',
-        dc: medDC,
-        reason: 'Проверка Внимательности (Perception)',
-        advantage_type: 'normal',
-      };
-    } else if (isInvestigation) {
-      parsed.requires_roll = {
-        needed: true,
-        roll_type: 'skill_check',
-        skill: 'Investigation',
-        ability: 'INT',
-        dc: hardDC,
-        reason: 'Поиск скрытых деталей и тайников (Investigation)',
-        advantage_type: 'normal',
-      };
-    } else if (isInsight) {
-      parsed.requires_roll = {
-        needed: true,
-        roll_type: 'skill_check',
-        skill: 'Insight',
-        ability: 'WIS',
-        dc: medDC,
-        reason: 'Проверка Проницательности (Insight)',
-        advantage_type: 'normal',
-      };
-    } else if (isMedicine) {
-      parsed.requires_roll = {
-        needed: true,
-        roll_type: 'skill_check',
-        skill: 'Medicine',
-        ability: 'WIS',
-        dc: easyDC,
-        reason: 'Проверка Медицины (Medicine)',
-        advantage_type: 'normal',
-      };
-    } else if (isNature) {
-      parsed.requires_roll = {
-        needed: true,
-        roll_type: 'skill_check',
-        skill: 'Nature',
-        ability: 'INT',
-        dc: easyDC,
-        reason: 'Проверка Природы (Nature)',
-        advantage_type: 'normal',
-      };
-    } else if (isArcana) {
-      parsed.requires_roll = {
-        needed: true,
-        roll_type: 'skill_check',
-        skill: 'Arcana',
-        ability: 'INT',
-        dc: hardDC,
-        reason: 'Проверка Магии (Arcana)',
-        advantage_type: 'normal',
-      };
-    } else if (isHistory) {
-      parsed.requires_roll = {
-        needed: true,
-        roll_type: 'skill_check',
-        skill: 'History',
-        ability: 'INT',
-        dc: medDC,
-        reason: 'Проверка Истории (History)',
-        advantage_type: 'normal',
-      };
-    } else if (isReligion) {
-      parsed.requires_roll = {
-        needed: true,
-        roll_type: 'skill_check',
-        skill: 'Religion',
-        ability: 'INT',
-        dc: medDC,
-        reason: 'Проверка Религии (Religion)',
-        advantage_type: 'normal',
-      };
-    } else if (isPersuasion) {
-      parsed.requires_roll = {
-        needed: true,
-        roll_type: 'skill_check',
-        skill: 'Persuasion',
-        ability: 'CHA',
-        dc: medDC,
-        reason: 'Проверка Убеждения (Persuasion)',
-        advantage_type: 'normal',
-      };
-    } else if (isDeception) {
-      parsed.requires_roll = {
-        needed: true,
-        roll_type: 'skill_check',
-        skill: 'Deception',
-        ability: 'CHA',
-        dc: medDC,
-        reason: 'Проверка Обмана (Deception)',
-        advantage_type: 'normal',
-      };
-    } else if (isIntimidation) {
-      parsed.requires_roll = {
-        needed: true,
-        roll_type: 'skill_check',
-        skill: 'Intimidation',
-        ability: 'CHA',
-        dc: medDC,
-        reason: 'Проверка Запугивания (Intimidation)',
-        advantage_type: 'normal',
-      };
-    } else if (isSavingThrow) {
-      parsed.requires_roll = {
-        needed: true,
-        roll_type: 'saving_throw',
-        ability: 'DEX',
-        dc: hardDC,
-        reason: 'Спасбросок от опасности или магии',
-        advantage_type: 'normal',
-      };
+  if (isAlreadyRoll && parsed.requires_roll) {
+    // If the player just rolled to resolve a previous check, default needed to false so players can freely play and dialogue
+    // unless the DM narrative explicitly demands an immediate second saving throw/reaction
+    if (!text.match(/(?:сделайте|совершите|бросьте|проверка)\s+(?:спасбросок|бросок|проверку|атаку)/i)) {
+      parsed.requires_roll.needed = false;
     }
   }
 
-  // 6. Targeted Multiplayer Roll Resolution: Ensure target_character_name & target_character_id are filled
+  // 6. Targeted Multiplayer Roll Resolution & Multi-Rolls (Array of Rolls)
+  if (!parsed.required_rolls) {
+    parsed.required_rolls = [];
+  }
+
   if (parsed.requires_roll && parsed.requires_roll.needed) {
-    if (!parsed.requires_roll.target_character_name || parsed.requires_roll.target_character_name.trim().length === 0) {
-      // If action had an explicit author, assign to them
-      if (actionAuthorName) {
+    const rawTarget = (parsed.requires_roll.target_character_name || '').trim();
+    if (!rawTarget || /совместн|раунд|отряд|действи/i.test(rawTarget)) {
+      if (actionAuthorName && !/совместн|раунд|отряд|действи/i.test(actionAuthorName)) {
         parsed.requires_roll.target_character_name = actionAuthorName;
+      } else if (partyPlayers.length > 0) {
+        parsed.requires_roll.target_character_name = partyPlayers[0].character?.name || partyPlayers[0].name || 'Герой';
+        parsed.requires_roll.target_character_id = partyPlayers[0].id;
       } else if (currentCharacter?.name) {
         parsed.requires_roll.target_character_name = currentCharacter.name;
-      } else if (partyPlayers.length > 0) {
-        parsed.requires_roll.target_character_name = partyPlayers[0].name || partyPlayers[0].character?.name || 'Герой';
+        parsed.requires_roll.target_character_id = currentCharacter.id || 'player';
       }
     }
 
@@ -432,26 +279,151 @@ function enrichStateUpdateFromNarrative(
 
       if (matchedPlayer) {
         parsed.requires_roll.target_character_id = matchedPlayer.id;
-        parsed.requires_roll.target_character_name = matchedPlayer.name || matchedPlayer.character?.name;
+        parsed.requires_roll.target_character_name = matchedPlayer.character?.name || matchedPlayer.name;
+      } else if (partyPlayers.length > 0 && /совместн|раунд|отряд|действи/i.test(targetNameLower)) {
+        parsed.requires_roll.target_character_id = partyPlayers[0].id;
+        parsed.requires_roll.target_character_name = partyPlayers[0].character?.name || partyPlayers[0].name;
       }
     }
 
-    // Ensure advantage_type has fallback
     if (!parsed.requires_roll.advantage_type) {
       parsed.requires_roll.advantage_type = 'normal';
     }
+
+    // Ensure it exists in required_rolls
+    const reqItem = parsed.requires_roll as DmRollRequest;
+    const exists = parsed.required_rolls.some(
+      (r) => r.target_character_id === reqItem.target_character_id && r.reason === reqItem.reason
+    );
+    if (!exists) {
+      parsed.required_rolls.unshift({
+        needed: true,
+        target_character_id: reqItem.target_character_id || actingPlayerId || 'player',
+        target_character_name: reqItem.target_character_name || actionAuthorName || 'Герой',
+        roll_type: (reqItem.roll_type as any) || 'skill_check',
+        ability: (reqItem.ability as any) || 'STR',
+        skill: reqItem.skill,
+        dc: reqItem.dc || 12,
+        reason: reqItem.reason || 'Проверка кубика',
+        advantage_type: reqItem.advantage_type || 'normal',
+        is_group_check: reqItem.is_group_check,
+        assisted_by_player_id: reqItem.assisted_by_player_id,
+      });
+    }
   }
 
-  // 7. Rest action duration & spell slot recovery from getRestRules
-  const restRules = getRestRules(difficulty);
+  // Ensure every item in required_rolls has valid player attribution
+  for (const r of parsed.required_rolls) {
+    if (!r.target_character_name || /совместн|раунд|отряд|действи/i.test(r.target_character_name)) {
+      if (actionAuthorName && !/совместн|раунд|отряд|действи/i.test(actionAuthorName)) {
+        r.target_character_name = actionAuthorName;
+      } else if (partyPlayers.length > 0) {
+        r.target_character_name = partyPlayers[0].character?.name || partyPlayers[0].name || 'Герой';
+        r.target_character_id = partyPlayers[0].id;
+      }
+    }
+    if (r.target_character_name) {
+      const tLower = r.target_character_name.toLowerCase().trim();
+      const match = partyPlayers.find(
+        (p) =>
+          p.name.toLowerCase() === tLower ||
+          p.character?.name?.toLowerCase() === tLower ||
+          tLower.includes(p.name.toLowerCase()) ||
+          (p.character?.name && tLower.includes(p.character.name.toLowerCase()))
+      );
+      if (match) {
+        r.target_character_id = match.id;
+        r.target_character_name = match.character?.name || match.name;
+      }
+    }
+    if (!r.target_character_id) {
+      r.target_character_id = actingPlayerId || (partyPlayers.length > 0 ? partyPlayers[0].id : 'player');
+    }
+    if (!r.advantage_type) {
+      r.advantage_type = 'normal';
+    }
+  }
+
+  // Sync back primary roll to requires_roll for single-roll consumers
+  if (parsed.required_rolls.length > 0) {
+    parsed.requires_roll = {
+      ...parsed.required_rolls[0],
+      needed: true,
+    };
+  }
+
+  // 7. P2P Trading / Item Transfer between players
+  const transferMatch = actionText.match(/(?:переда(?:ю|ет)|отда(?:ю|ет)|дар(?:ю|ит)|дел(?:юсь|ится))\s+([^.,\n]+?)\s+(?:напарнику|союзнику|игроку|персонажу|товарищу|([А-Яа-яA-Za-z0-9_]+))/i);
+  if (transferMatch) {
+    const rawItem = transferMatch[1].replace(/(?:сво[ёея]|одно|одну|свой|свои)\s+/i, '').trim();
+    const targetNameHint = (transferMatch[2] || '').toLowerCase().trim();
+    const receiver = partyPlayers.find(
+      (p) =>
+        p.id !== actingPlayerId &&
+        (targetNameHint ? (p.name.toLowerCase().includes(targetNameHint) || p.character?.name?.toLowerCase().includes(targetNameHint)) : true)
+    );
+
+    if (receiver && rawItem && actingPlayerId) {
+      if (!parsed.state_update.party_updates![actingPlayerId]) {
+        parsed.state_update.party_updates![actingPlayerId] = { removed_items: [] };
+      }
+      if (!parsed.state_update.party_updates![actingPlayerId].removed_items) {
+        parsed.state_update.party_updates![actingPlayerId].removed_items = [];
+      }
+      if (!parsed.state_update.party_updates![actingPlayerId].removed_items!.includes(rawItem)) {
+        parsed.state_update.party_updates![actingPlayerId].removed_items!.push(rawItem);
+      }
+
+      if (!parsed.state_update.party_updates![receiver.id]) {
+        parsed.state_update.party_updates![receiver.id] = { added_items: [] };
+      }
+      if (!parsed.state_update.party_updates![receiver.id].added_items) {
+        parsed.state_update.party_updates![receiver.id].added_items = [];
+      }
+      if (!parsed.state_update.party_updates![receiver.id].added_items!.includes(rawItem)) {
+        parsed.state_update.party_updates![receiver.id].added_items!.push(rawItem);
+      }
+
+      if (!parsed.state_update.p2p_transfers) {
+        parsed.state_update.p2p_transfers = [];
+      }
+      parsed.state_update.p2p_transfers.push({
+        from_player_id: actingPlayerId,
+        to_player_id: receiver.id,
+        item: rawItem,
+      });
+    }
+  }
+
+  // Duplicate general state_update values to actingPlayerId in party_updates
+  if (actingPlayerId) {
+    if (!parsed.state_update.party_updates![actingPlayerId]) {
+      parsed.state_update.party_updates![actingPlayerId] = {};
+    }
+    const pPatch = parsed.state_update.party_updates![actingPlayerId];
+    if (pPatch.hp_change === undefined && parsed.state_update.hp_change !== 0) {
+      pPatch.hp_change = parsed.state_update.hp_change;
+    }
+    if (pPatch.gold_change === undefined && parsed.state_update.gold_change !== 0) {
+      pPatch.gold_change = parsed.state_update.gold_change;
+    }
+    if ((!pPatch.added_items || pPatch.added_items.length === 0) && parsed.state_update.added_items?.length) {
+      pPatch.added_items = [...parsed.state_update.added_items];
+    }
+    if ((!pPatch.removed_items || pPatch.removed_items.length === 0) && parsed.state_update.removed_items?.length) {
+      pPatch.removed_items = [...parsed.state_update.removed_items];
+    }
+  }
+
+  // 8. Strict D&D 5e Rest action duration (Exact 60 min Short Rest, 480 min Long Rest for ALL difficulties)
   const combinedActionAndText = `${actionText} ${text}`.toLowerCase();
   const isShortRest = /(?:короткий\s+отдых|привал|короткая\s+передышка|перевести\s+дух|отдыха(?:ем|ет|ют)\s+1\s+час)/i.test(combinedActionAndText);
-  const isLongRest = /(?:длительный\s+отдых|долгий\s+отдых|ночлег|ночуем|разбива(?:ем|ет|ют)\s+лагерь|ночной\s+сон|спим\s+ночью|отдых\s+8\s+часов|отдых\s+7\s+(?:дней|суток))/i.test(combinedActionAndText);
+  const isLongRest = /(?:длительный\s+отдых|долгий\s+отдых|ночлег|ночуем|разбива(?:ем|ет|ют)\s+лагерь|ночной\s+сон|спим\s+ночью|отдых\s+8\s+часов)/i.test(combinedActionAndText);
 
   if (isLongRest) {
     parsed.state_update.time_passed_minutes = Math.max(
       parsed.state_update.time_passed_minutes || 0,
-      restRules.longRestDurationMinutes
+      DND_REST_CONSTANTS.LONG_REST_MINUTES
     );
     if (!parsed.state_update.spell_slots_recovered) {
       parsed.state_update.spell_slots_recovered = { all: true };
@@ -459,7 +431,7 @@ function enrichStateUpdateFromNarrative(
   } else if (isShortRest) {
     parsed.state_update.time_passed_minutes = Math.max(
       parsed.state_update.time_passed_minutes || 0,
-      restRules.shortRestDurationMinutes
+      DND_REST_CONSTANTS.SHORT_REST_MINUTES
     );
   }
 
@@ -490,23 +462,82 @@ function enrichStateUpdateFromNarrative(
     parsed.suggested_actions = ['Осмотреться вокруг', 'Прислушаться', 'Двигаться дальше'];
   }
 
-  // 10. Level Up check using 5e XP table
+  // 9.5. Fallback parsing for XP from narrative text if not explicitly provided
+  if (!parsed.state_update.xp_change) {
+    const xpMatch = text.match(/(?:\+|\bполуча(?:ете|ет|ют)\s+)?(\d{2,5})\s*(?:XP|EXP|хп\s+опыта|опыта|ед(?:\.|иниц)?\s+опыта)\b/i);
+    if (xpMatch && xpMatch[1]) {
+      const parsedXp = parseInt(xpMatch[1], 10);
+      if (!isNaN(parsedXp) && parsedXp > 0) {
+        parsed.state_update.xp_change = parsedXp;
+      }
+    }
+  }
+
+  // 10. Co-op / Party XP distribution & D&D 5e In-Combat Level Up Rule
+  // (Level up is strictly deferred if active_combat.is_active is true)
+  const isCombatActive = Boolean(parsed.active_combat?.is_active);
+  const totalXpAwarded = parsed.state_update.xp_change || 0;
+
+  if (partyPlayers && partyPlayers.length > 0) {
+    // If encounter XP was awarded, divide it equally among all alive party players
+    if (totalXpAwarded > 0) {
+      const splitXp = distributePartyXp(totalXpAwarded, partyPlayers.length);
+      for (const p of partyPlayers) {
+        if (!parsed.state_update.party_updates[p.id]) {
+          parsed.state_update.party_updates[p.id] = {};
+        }
+        if (parsed.state_update.party_updates[p.id].xp_change === undefined) {
+          parsed.state_update.party_updates[p.id].xp_change = splitXp;
+        }
+      }
+      parsed.state_update.xp_change = splitXp;
+    }
+
+    // Process Level Up eligibility for each party member
+    for (const p of partyPlayers) {
+      if (!p.character) continue;
+      const cLevel = p.character.level || 1;
+      const cXp = p.character.experience || 0;
+      const pGain = parsed.state_update.party_updates[p.id]?.xp_change ?? 0;
+      const pending = checkPendingLevelUp(cXp + pGain, cLevel, isCombatActive);
+
+      if (pending.canLevelUp) {
+        const cls = CLASS_HIT_DICE[p.character.class];
+        if (!parsed.state_update.party_updates[p.id]) {
+          parsed.state_update.party_updates[p.id] = {};
+        }
+        parsed.state_update.party_updates[p.id].level_up_available = {
+          new_level: pending.targetLevel,
+          hit_die: cls ? `d${cls.die}` : 'd10',
+        };
+      } else if (parsed.state_update.party_updates[p.id]?.level_up_available) {
+        delete parsed.state_update.party_updates[p.id].level_up_available;
+      }
+    }
+  }
+
+  // Check Level Up for host / solo character
   if (currentCharacter) {
     const currentLevel = currentCharacter.level || 1;
     const currentXp = currentCharacter.experience || 0;
-    const xpGain = parsed.state_update.xp_change || 0;
-    const nextLevel = checkLevelUp(currentLevel, currentXp + xpGain);
-    if (nextLevel && !parsed.state_update.level_up_available) {
+    const xpGain = (currentCharacter.id && parsed.state_update.party_updates?.[currentCharacter.id]?.xp_change !== undefined)
+      ? parsed.state_update.party_updates[currentCharacter.id].xp_change!
+      : (parsed.state_update.xp_change || 0);
+
+    const pending = checkPendingLevelUp(currentXp + xpGain, currentLevel, isCombatActive);
+    if (pending.canLevelUp) {
       const cls = CLASS_HIT_DICE[currentCharacter.class];
       parsed.state_update.level_up_available = {
-        new_level: nextLevel,
+        new_level: pending.targetLevel,
         hit_die: cls ? `d${cls.die}` : 'd10',
       };
+    } else {
+      delete parsed.state_update.level_up_available;
     }
   }
 
   // 11. Concentration Check on Damage
-  if (currentCharacter?.concentration && parsed.state_update.hp_change < 0) {
+  if (currentCharacter?.concentration && typeof parsed.state_update?.hp_change === 'number' && parsed.state_update.hp_change < 0) {
     const dmgTaken = Math.abs(parsed.state_update.hp_change);
     const conDc = Math.max(10, Math.floor(dmgTaken / 2));
     if (!parsed.requires_roll || !parsed.requires_roll.needed) {
@@ -523,9 +554,60 @@ function enrichStateUpdateFromNarrative(
     }
   }
 
-  // 12. Safe fallback for advantage_type
-  if (parsed.requires_roll?.needed && !parsed.requires_roll.advantage_type) {
-    parsed.requires_roll.advantage_type = 'normal';
+  // 13. Apply Deterministic GM Overrides (God Mode, XP, Gold, Items, Teleport, Kill Combat)
+  const gmOverride = parseGmOverrideCommands(actionText, currentCharacter);
+  if (gmOverride.hasOverride) {
+    const patch = gmOverride.forcedStatePatch;
+    if (patch.forceKillCombat) {
+      parsed.active_combat = { is_active: false, round: 0, enemies: [] };
+    }
+    if (patch.forceTeleportLocation) {
+      parsed.state_update.location_name = patch.forceTeleportLocation;
+    }
+    if (patch.forceHealFull && currentCharacter) {
+      parsed.state_update.hp_change = Math.max(0, currentCharacter.maxHp - currentCharacter.currentHp);
+    }
+    if (typeof patch.hp_change === 'number') {
+      parsed.state_update.hp_change = patch.hp_change;
+    }
+    if (typeof patch.xp_change === 'number') {
+      parsed.state_update.xp_change = patch.xp_change;
+      if (partyPlayers && partyPlayers.length > 0) {
+        for (const p of partyPlayers) {
+          if (!parsed.state_update.party_updates[p.id]) parsed.state_update.party_updates[p.id] = {};
+          parsed.state_update.party_updates[p.id].xp_change = patch.xp_change;
+        }
+      }
+    }
+    if (typeof patch.gold_change === 'number') {
+      parsed.state_update.gold_change = (parsed.state_update.gold_change || 0) + patch.gold_change;
+    }
+    if (patch.added_items && patch.added_items.length > 0) {
+      parsed.state_update.added_items = Array.from(new Set([...(parsed.state_update.added_items || []), ...patch.added_items]));
+    }
+    if (patch.removed_items && patch.removed_items.length > 0) {
+      parsed.state_update.removed_items = Array.from(new Set([...(parsed.state_update.removed_items || []), ...patch.removed_items]));
+    }
+    if (patch.forceRollAutoPass) {
+      parsed.requires_roll = { needed: false };
+      parsed.required_rolls = [];
+    }
+    if (patch.spell_slots_recovered) {
+      parsed.state_update.spell_slots_recovered = patch.spell_slots_recovered;
+    }
+    if (patch.conditions_removed && patch.conditions_removed.length > 0) {
+      parsed.state_update.conditions_removed = Array.from(new Set([...(parsed.state_update.conditions_removed || []), ...patch.conditions_removed]));
+    }
+    if (patch.time_passed_minutes) {
+      parsed.state_update.time_passed_minutes = patch.time_passed_minutes;
+    }
+    if (patch.forceLevelUpAvailable && currentCharacter) {
+      const cls = CLASS_HIT_DICE[currentCharacter.class];
+      parsed.state_update.level_up_available = {
+        new_level: (currentCharacter.level || 1) + 1,
+        hit_die: cls?.die ? `d${cls.die}` : 'd10',
+      };
+    }
   }
 
   return parsed;
@@ -746,10 +828,10 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 2. Build Live Party Roster (LAN Multiplayer Group)
+    // 2. Build Live Party Roster (Co-op Group of Live Players)
     let partyRosterPrompt = '';
     if (partyPlayers && partyPlayers.length > 0) {
-      partyRosterPrompt = `\n[👥 ОТРЯД ЖИВЫХ ИГРОКОВ (PARTY ROSTER - ${partyPlayers.length} УЧАСТНИКОВ)]:\n` +
+      partyRosterPrompt = `\n[👥 АКТИВНЫЕ ГЕРОИ КООПЕРАТИВНОЙ КАМПАНИИ (ОТРЯД ЖИВЫХ ИГРОКОВ - ${partyPlayers.length} УЧАСТНИКОВ)]:\n` +
         partyPlayers.map((p, idx) => {
           const c = p.character || {};
           const s = c.stats || { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };
@@ -765,12 +847,14 @@ export async function POST(req: NextRequest) {
           const pPassInv = c.passive_stats?.investigation ?? calculatePassiveScore(pIntMod, (c.skillProficiencies || []).includes('Investigation'), pProf);
           const pConc = c.concentration ? ` | 🌀 Концентрация: «${c.concentration.spell_name}»` : '';
           const pPos = c.position ? ` | 📍 Позиция: (${c.position.x}, ${c.position.y})` : '';
+          const pTac = c.tactical_position ? ` | 🛡️ Тактическая позиция: [${c.tactical_position}]` : ' | 🛡️ Тактическая позиция: [frontline]';
+          const pSlots = c.spellSlots ? ` | 🔮 Ячейки магии: ${JSON.stringify(c.spellSlots)}` : '';
 
           const saves = (c.savingThrowProficiencies || []).map((sv) => sv.toUpperCase()).join(', ') || 'Базовые';
           const skills = (c.skillProficiencies || []).join(', ') || 'Базовые';
           const pEquipped = c.equippedItems && c.equippedItems.length > 0 ? c.equippedItems.join(', ') : 'Базовое снаряжение';
           const pInv = c.inventory && c.inventory.length > 0 ? c.inventory.join(', ') : 'Пусто';
-          return `${idx + 1}. ПЕРСОНАЖ: "${p.name || c.name || 'Герой'}" (ID: "${p.id}") | Класс: ${c.class || 'Воин'} ${c.level || 1} ур. (${c.race || 'Человек'}) | HP: ${c.currentHp || 10}/${c.maxHp || 10}, AC: ${c.ac || 10} | СИЛ ${s.str} (${fmtM(s.str)}), ЛОВ ${s.dex} (${fmtM(s.dex)}), ТЕЛ ${s.con} (${fmtM(s.con)}), ИНТ ${s.int} (${fmtM(s.int)}), МУД ${s.wis} (${fmtM(s.wis)}), ХАР ${s.cha} (${fmtM(s.cha)}) | Спасброски: ${saves} | Навыки: ${skills} | 👁️ Пассивные: Внимательность ${pPassPerc}, Проницательность ${pPassIns}, Анализ ${pPassInv}${pConc}${pPos} | 🛡️ Надето: [${pEquipped}] | 🎒 Инвентарь: [${pInv}] | 💰 Золото: ${c.gold || 0} gp`;
+          return `${idx + 1}. ПЕРСОНАЖ: "${p.name || c.name || 'Герой'}" (ID: "${p.id}") | Класс: ${c.class || 'Воин'} ${c.level || 1} ур. (${c.race || 'Человек'}) | HP: ${c.currentHp || 10}/${c.maxHp || 10}, AC: ${c.ac || 10}${pTac} | СИЛ ${s.str} (${fmtM(s.str)}), ЛОВ ${s.dex} (${fmtM(s.dex)}), ТЕЛ ${s.con} (${fmtM(s.con)}), ИНТ ${s.int} (${fmtM(s.int)}), МУД ${s.wis} (${fmtM(s.wis)}), ХАР ${s.cha} (${fmtM(s.cha)}) | Спасброски: ${saves} | Навыки: ${skills} | 👁️ Пассивные: Внимательность ${pPassPerc}, Проницательность ${pPassIns}, Анализ ${pPassInv}${pConc}${pPos}${pSlots} | 🛡️ Надето: [${pEquipped}] | 🎒 Инвентарь: [${pInv}] | 💰 Золото: ${c.gold || 0} gp`;
         }).join('\n');
     }
 
@@ -914,10 +998,27 @@ ${character.backstory || character.bio ? `- Предыстория: ${character.
    - Иммунитет (Immunity): урон равен 0.
    Отражай нанесенный тип урона в "damage_details": { "amount": 8, "type": "fire" } в state_update.
 
-[📈 ПРОГРЕССИЯ УРОВНЕЙ И СИСТЕМА ОПЫТА (LEVEL UP & XP SYSTEM)]:
-1. Начисляй честный опыт (XP) в "xp_change" за каждое преодоленное испытание: побежденные враги (Гоблин 50 XP, Скелет 50 XP, Орк 100 XP, Главарь бандитов 450 XP), обезвреженные ловушки, мирные переговоры, раскрытые тайны.
-2. Пороги повышения уровня 5e: 1 ур. -> 2 ур. (300 XP), 2 ур. -> 3 ур. (900 XP), 3 ур. -> 4 ур. (2700 XP), 4 ур. -> 5 ур. (6500 XP).
-3. При достижении порога нового уровня выставляй в state_update: "level_up_available": { "new_level": 2, "hit_die": "d10" }. Опиши в повествовании прилив сил и готовность развить навыки!
+[🏆 НАЧИСЛЕНИЕ ОПЫТА И LEVEL UP ВНЕ БИТВЫ (D&D 5e XP ENGINE)]:
+1. ИСТОЧНИКИ НАЧИСЛЕНИЯ ОПЫТА (XP):
+   - Победа над противниками: убийство, бегство, пленение или успешный скрытный обход врагов (Гоблин 50 XP, Скелет 50 XP, Зомби 50 XP, Орк 100 XP, Лютоволк 200 XP, Главарь бандитов 450 XP, Огр 450 XP, Тролль 1800 XP).
+   - Небоевые вызовы (Non-combat Encounters):
+     * Обезвреживание и обход смертоносных ловушек (25–100 XP).
+     * Социальные успехи: успешные переговоры, раскрытие лжи, примирение враждующих сторон (50–200 XP).
+     * Разгадка древних тайн, головоломок и обнаружение скрытых локаций (50–250 XP).
+     * Выполнение сюжетных заданий и спасение заложников (100–500 XP).
+2. РАСПРЕДЕЛЕНИЕ ОПЫТА В КООПЕРАТИВЕ (PARTY SPLIT):
+   - Общий заработанный опыт делится ПОРОВНУ между всеми живыми участниками отряда.
+   - В кооперативном режиме указывай опыт каждому персонажу в "party_updates":
+     "party_updates": {
+       "player_id_1": { "xp_change": 50 },
+       "player_id_2": { "xp_change": 50 }
+     }
+3. СТРОГОЕ ПРАВИЛО: LEVEL UP ТОЛЬКО ВНЕ БИТВЫ (D&D 5e RULES):
+   - Повышение уровня (Level Up) происходит ИСКЛЮЧИТЕЛЬНО ВНЕ БОЕВОЙ СХВАТКИ (когда "active_combat.is_active": false).
+   - Если нужный порог XP преодолен прямо посреди боя, переход на новый уровень СТРОГО ОТКЛАДЫВАЕТСЯ до полного завершения битвы! НЕ выставляй "level_up_available", пока "active_combat.is_active" равен true.
+   - В раунде, когда последний враг повержен или бой окончен ("active_combat.is_active": false), немедленно выстави "level_up_available": { "new_level": 2, "hit_die": "d10" } и красочно опиши в narrative триумф и готовность героев раскрыть новые классовые силы!
+4. ПОРОГИ ОПЫТА D&D 5e:
+   1 ур. -> 2 ур. (300 XP), 2 ур. -> 3 ур. (900 XP), 3 ур. -> 4 ур. (2700 XP), 4 ур. -> 5 ур. (6500 XP), 5 ур. -> 6 ур. (14000 XP).
 
 [👁️ ПАССИВНЫЕ ПРОВЕРКИ И СОЦИАЛЬНЫЕ ПОРОГИ DMG (PASSIVE PERCEPTION & SOCIAL THRESHOLDS)]:
 1. Пассивная Внимательность (Passive Perception) и Пассивный Анализ (Passive Investigation):
@@ -966,6 +1067,91 @@ NPC, разбойники и чудовища могут хитрить, лга�
 - Игрок НЕ нажимает кнопки атак вручную в интерфейсе. ТЫ САМ ОБЯЗАН видеть всё надетое снаряжение персонажа и детально просчитывать бои и сцены исходя из него!
 - В бою описывай атаки героя именно тем оружием, которое экипировано у него в руках. При вражеских атаках учитывай надетую броню и щит: описывай, как удары монстров лязгают о металл брони или блокируются щитом, если атака не пробивает AC ${character.ac || 10}.
 
+[⏰ КАНОНИЧЕСКИЙ УЧЕТ ВРЕМЕНИ (МИНУТЫ, ЧАСЫ, ДНИ)]:
+В этой системе НЕТ секунд. Минимальная единица времени — 1 минута.
+Ты ОБЯЗАН списывать затраченное время целыми минутами в поле "time_passed_minutes":
+- КОРОТКИЙ ОТДЫХ: Всегда занимает РОВНО 60 минут (1 час) вне зависимости от сложности ("time_passed_minutes": 60).
+- ДЛИННЫЙ ОТДЫХ: Всегда занимает РОВНО 480 минут (8 часов) вне зависимости от сложности ("time_passed_minutes": 480).
+- ПАРАЛЛЕЛЬНЫЕ ДЕЙСТВИЯ: В совместном раунде время НЕ удваивается. Если оба героя 10 минут обыскивали комнату — списывай 10 минут. Если один ждал, пока второй крался — списывай максимум из двух действий.
+- БОЕВАЯ СХВАТКА: Любой бой длится минимум 1 минуту ("time_passed_minutes": 1). Затяжной бой = 2–5 минут.
+- БЫСТРЫЕ ДЕЙСТВИЯ: Выпить зелье, беглый диалог, взлом замка, выбить дверь = 1 минута.
+- ВДУМЧИВОЕ ИССЛЕДОВАНИЕ: Обыск комнаты, разгадка головоломки, допрос = 10–15 минут.
+- ПЕРЕДВИЖЕНИЕ:
+  * Переход между кварталами: 15–30 минут.
+  * Поход по дороге: 1 лига (3 мили) = 60 минут (1 час).
+  * Переход через чащу/горы/болото: 1 лига = 120 минут (2 часа).
+- РАСХОДНЫЕ ЭФФЕКТЫ:
+  * Факел горит ровно 60 минут (1 час) суммарного игрового времени. Списывай в removed_items по истечении.
+  * Заклинания на 1 минуту действуют только в рамках одной сцены/боя.
+- СМЕНА СУТОК: Время транслируется в часы и дни (new_time, new_day). Описывай утро, зенит, сумерки, ночную тьму и усталость от бодрствования более 16 часов.
+
+[👥 ОБРАБОТКА СОВМЕСТНОГО ХОДА ОТРЯДА]:
+Ты получаешь единый блок заявок от ВСЕХ участников партии.
+- Твой ответ (narrative) ОБЯЗАН одновременно и последовательно отражать действия КАЖДОГО игрока в рамках одной сцены.
+- Описывай, как действия героев дополняют друг друга, мешают или происходят параллельно.
+- КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО игнорировать действие любого из игроков.
+
+[🎲 ПРАВИЛА БРОСКОВ КУБИКОВ И ТЕМП ИГРЫ (DICE ROLLS PACING)]:
+1. НЕ СПАМЬ БРОСКАМИ КУБИКОВ! В большинстве ситуаций (разговоры с NPC, вопросы жрецам/торговцам, осмотр залов, переход по безопасной дороге, передача предметов, планирование) бросок кубика НЕ ТРЕБУЕТСЯ! В таких случаях возвращай:
+   "requires_roll": { "needed": false },
+   "required_rolls": []
+   Давай игрокам свободно общаться, узнавать сюжет, исследовать мир и отыгрывать своих персонажей.
+2. КОГДА БРОСОК ДЕЙСТВИТЕЛЬНО НУЖЕН:
+   Запрашивай бросок ("needed": true) ТОЛЬКО когда действие сопряжено с явной опасностью, атакой противника, уклонением от ловушки, попыткой взлома сложного механизма или острым конфликтом, где провал влечет за собой конкретный урон или сюжетный тупик.
+3. ПОСЛЕ БРОСКА ИГРОКА (RESOLVING ROLLS):
+   Если игрок в своем сообщении прислал результат броска (например "🎲 [Бросок...]: d20 (14) + 1 = 15"), ты ОБЯЗАН:
+   - Описать исход и последствия этой проверки в тексте narrative;
+   - Установить "requires_roll": { "needed": false } и "required_rolls": [];
+   - КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО сразу же в ответ требовать новый бросок кубика! Дай игрокам перевести дух, отреагировать на исход и свободно выбрать следующее действие!
+4. ПОСТАНОВКА ДЕЙСТВИЯ (NARRATIVE ROLL SETUP):
+   Когда бросок реально необходим, опиши в narrative завязку и напряжение момента, приложи required_rolls БЕЗ объявления финального исхода.
+   В "target_character_name" и "target_character_id" указывай ТОЛЬКО конкретное реальное имя и ID персонажа (например "Торин" или "Педагог"). НИКОГДА не пиши сюда названия раундов или слово "отряд"!
+
+[🎲 МУЛЬТИ-БРОСКИ И МЕХАНИКА «ПОМОЩИ» (HELP ACTION & GROUP CHECKS)]:
+1. Если несколько игроков одновременно совершают рискованные действия, возвращай массив "required_rolls" с отдельным элементом для каждого участника с их личными "target_character_id" и "target_character_name".
+2. Если один игрок пишет «помогаю напарнику [действие]»:
+   - НЕ требуй отдельный бросок от помощника, если ситуация тривиальна.
+   - Выдавай бросок основному игроку со значением "advantage_type": "advantage" и укажи "assisted_by_player_id": "ID_помощника".
+3. Если оба игрока одновременно крадутся/прячутся — помечай проверку как "is_group_check": true.
+
+[📍 ПОЗИЦИОНИРОВАНИЕ И ЗОНЫ ПОРАЖЕНИЯ (FRIENDLY FIRE)]:
+1. Учитывай тактические позиции героев:
+   - "frontline" (авангард) — принимает на себя атаки врагов в ближнем бою;
+   - "backline" (прикрытие/тыл) — маги и стрелки на безопасной дистанции;
+   - "stealth" (скрытность) — действует из засады/теней с преимуществом на скрытность;
+   - "separated" (отделился) — находится в другой комнате/зоне.
+2. Если герои имеют статус "separated", они не могут помогать друг другу действием Help, обмениваться предметами или переговариваться шёпотом без заклинаний связи!
+3. ЗАКЛИНАНИЯ ПО ПЛОЩАДИ И ДРУЖЕСКИЙ ОГОНЬ (Friendly Fire):
+   При сотворении заклинаний по площади (Огненный шар, Громовая волна, Руки Хадара) учитывай позиции союзников. Если напарник находится в радиусе поражения, ОБЯЗАТЕЛЬНО назначай спасбросок и союзнику в required_rolls и списывай HP при провале (за исключением заклинателей школы Воплощения со способностью Sculpt Spells).
+
+[🔄 ОБМЕН ВЕЩАМИ И БАНК ЛАГЕРЯ (P2P TRADING & CAMP STASH)]:
+1. При передаче предметов или золота между игроками («отдаю зелье напарнику», «делюсь 10 gp»):
+   ОБЯЗАТЕЛЬНО списывай предмет у дарителя и добавляй получателю в "party_updates":
+   "party_updates": {
+     "ID_Дарителя": { "removed_items": ["Зелье лечения"] },
+     "ID_Получателя": { "added_items": ["Зелье лечения"] }
+   }
+   и отражай в "p2p_transfers": [{ "from_player_id": "...", "to_player_id": "...", "item": "Зелье лечения" }].
+2. При сбросе тяжелых вещей в лагерь или на лошадь перемещай их в "camp_stash_updates.added_items", удаляя из инвентаря персонажа.
+
+[🤫 ПРИВАТНЫЕ ДЕЙСТВИЯ И ТАЙНЫЕ ЗНАНИЯ (WHISPERS & SECRET KNOWLEDGE)]:
+Если действие одного игрока скрытно от напарника (карманная кража, тайный осмотр знака, телепатический шёпот):
+- В общем "narrative" опиши картину для всех присутствующих нейтрально.
+- В массиве "private_narratives" сформируй скрытое сообщение только для целевого игрока:
+  "private_narratives": [{ "target_player_id": "player_id", "text": "Ты незаметно прячешь перстень в сапог..." }]
+
+[❤️ СПАСЕНИЕ, ПЕРВАЯ ПОМОЩЬ И 0 HP (REVIVE & FIRST AID)]:
+Когда союзник падает без сознания при 0 HP:
+1. «Первая помощь»: требует проверку Медицины (DC 10) от напарника ("required_rolls" с ability "WIS", skill "Medicine"). При успехе союзник стабилизируется (0 HP, спасброски прекращаются).
+2. «Набор целителя»: автоматическая стабилизация союзника без броска (списать заряд набора целителя в removed_items).
+3. Зелье лечения или исцеляющее заклинание на союзника: немедленный подъем на ноги с восстановленным запасом HP.
+
+[🎁 ОБЩИЙ ПУЛ ДОБЫЧИ (UNCLAIMED LOOT)]:
+При обнаружении сокровищницы, тайника или богатого сундука не отдавай всё случайно одному персонажу.
+Помещай найденные ценности в массив "unclaimed_loot":
+"unclaimed_loot": [{ "id": "loot_1", "name": "Серебряный кубок", "type": "gem", "count": 1 }]
+Игроки в следующих репликах сами решат, кто что забирает, после чего ты переведешь предметы в party_updates.added_items.
+
 
 ${worldTimeBlock}
 
@@ -1000,66 +1186,64 @@ ${charDetails}
     "reason": "Проверка Атлетики (STR) для взлома двери",
     "advantage_type": "normal"
   },
+  "required_rolls": [
+    {
+      "target_character_name": "Торгрим",
+      "target_character_id": "player_id_1",
+      "roll_type": "skill_check",
+      "ability": "STR",
+      "skill": "Athletics",
+      "dc": 14,
+      "reason": "Проверка Атлетики (STR) для выбивания двери",
+      "advantage_type": "advantage",
+      "assisted_by_player_id": "player_id_2"
+    }
+  ],
+  "party_updates": {
+    "player_id_1": {
+      "hp_change": 0,
+      "removed_items": ["Отмычка"]
+    },
+    "player_id_2": {
+      "hp_change": 0,
+      "added_items": ["Факел"]
+    }
+  },
+  "unclaimed_loot": [
+    { "id": "loot_1", "name": "Зелье лечения (2d4+2)", "type": "potion", "count": 2 }
+  ],
+  "private_narratives": [
+    { "target_player_id": "player_id_2", "text": "Пока Торгрим ломится в дверь, ты замечаешь скрытый символ воровской гильдии на косяке..." }
+  ],
   "state_update": {
-    "hp_change": -4,
-    "gold_change": 15,
-    "xp_change": 75,
-    "added_items": ["Зелье лечения (2d4+2)"],
+    "hp_change": 0,
+    "gold_change": 0,
+    "xp_change": 50,
+    "added_items": [],
     "removed_items": [],
-    "spell_slots_used": { "1": 1 },
-    "spell_slots_recovered": { "all": true },
-    "conditions_added": ["Poisoned"],
-    "conditions_removed": ["Prone"],
-    "concentration_update": { "action": "maintain" },
-    "level_up_available": { "new_level": 2, "hit_die": "d10" },
-    "opportunity_attack_triggered": false,
-    "damage_details": { "amount": 4, "type": "slashing" },
+    "spell_slots_used": {},
+    "spell_slots_recovered": { "all": false },
+    "conditions_added": [],
+    "conditions_removed": [],
     "location_name": "Название текущей локации",
-    "time_passed_minutes": 15,
+    "time_passed_minutes": 1,
     "new_time": "18:00"
   },
   "active_combat": {
-    "is_active": true,
-    "round": 1,
-    "current_turn": "Торгрим",
-    "grid": { "width": 10, "height": 10 },
-    "enemies": [
-      {
-        "id": "goblin_1",
-        "name": "Гоблин-разведчик",
-        "hp": 7,
-        "max_hp": 7,
-        "ac": 13,
-        "position": { "x": 3, "y": 4 },
-        "cover": "half",
-        "conditions": [],
-        "resistances": [],
-        "vulnerabilities": []
-      }
-    ]
+    "is_active": false,
+    "round": 0,
+    "enemies": []
   },
-  "nearby_npcs": [
-    {
-      "name": "Имя NPC рядом",
-      "role": "Роль/Класс",
-      "relationship": "Отношение к героям",
-      "affinity": "friendly",
-      "hp": 16,
-      "maxHp": 16,
-      "ac": 14,
-      "mainStat": "WIS +3",
-      "specialAbilities": "Способности",
-      "personality": "Характер"
-    }
-  ]
+  "nearby_npcs": []
 }
 
-[⚡ ПРАВИЛА ОБНОВЛЕНИЯ ЛИСТА ПЕРСОНАЖА И ВРЕМЕНИ В STATE_UPDATE]:
-1. АДАПТИВНОЕ ИГРОВОЕ ВРЕМЯ ("time_passed_minutes" и "new_time"): Управляй ходом часов и суток мира.
-2. УРОН И ЛЕЧЕНИЕ: Отрицательное число при уроне (например: "hp_change": -6), положительное при лечении ("hp_change": 8).
-3. ПРЕДМЕТЫ И ЗОЛОТО: Добавляй лут в "added_items", расходники в "removed_items", золото в "gold_change".
-4. ЯЧЕЙКИ И СОСТОЯНИЯ: Списывай слоты в "spell_slots_used", восстанавливай в "spell_slots_recovered", накладывай/снимай эффекты в "conditions_added" / "conditions_removed".
-5. НАГРАДА ЗА ОПЫТ D&D 5e ("xp_change"): Всегда награждай персонажей опытом за победы над врагами, успешные проверки навыков, разгаданные тайны, переговоры и сюжетные достижения.
+[⚡ ПРАВИЛА ОБНОВЛЕНИЯ ЛИСТА ПЕРСОНАЖА И ВРЕМЕНИ В STATE_UPDATE И PARTY_UPDATES]:
+1. КАНОНИЧЕСКОЕ ИГРОВОЕ ВРЕМЯ ("time_passed_minutes" и "new_time"): Только целые минуты, никаких секунд! Отдых: 60 мин (короткий), 480 мин (длинный).
+2. АДРЕСНОЕ РАСПРЕДЕЛЕНИЕ ("party_updates"): Изменения каждого конкретного персонажа записывай строго в party_updates[player_id].
+3. УРОН И ЛЕЧЕНИЕ: Отрицательное число при уроне (например: "hp_change": -6), положительное при лечении ("hp_change": 8).
+4. ПРЕДМЕТЫ И ЗОЛОТО: Добавляй лут в "added_items", расходники в "removed_items", золото в "gold_change".
+5. ЯЧЕЙКИ И СОСТОЯНИЯ: Списывай слоты в "spell_slots_used", восстанавливай в "spell_slots_recovered", накладывай/снимай эффекты в "conditions_added" / "conditions_removed".
+6. НАГРАДА ЗА ОПЫТ D&D 5e ("xp_change"): Всегда награждай отряд опытом за победы, разгадки тайн и преодоление преград.
 
 [🌍 СЕТТИНГ И АТМОСФЕРА МИРА]:
 - Сеттинг: ${world.customSetting || 'Классическое темное фэнтези Забытых Королевств'}
@@ -1086,9 +1270,15 @@ ${userCustomPrompt ? `\n[ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ ИГ�
     const depthAnchor = `[СИСТЕМНЫЙ ЯКОРЬ ПАМЯТИ: Ты — Dungeon Master. Игровое время: ${formattedClock} (${timeOfDayDesc}). Пиши СТРОГО на русском языке. СТРОГИЙ ЗАПРЕТ ПРЕДМЕТОВ ИЗ ВОЗДУХА: игрок может использовать ТОЛЬКО то, что есть в его инвентаре/снаряжении. АВТОМАТИЧЕСКИЙ ИНВЕНТАРЬ: Когда игрок соглашается взять предмет или пишет «я беру...», «я взял...», «забираю...», «подбираю...», «покупаю...» — ОБЯЗАТЕЛЬНО добавь этот предмет в state_update.added_items! При расходе предметов указывай их в removed_items. При необходимости броска укажи целевого персонажа в requires_roll.]`;
 
     if (action && action.trim().length > 0) {
+      const gmOverride = parseGmOverrideCommands(action, character);
+      let actionContent = `${depthAnchor}\n\n[Действие]: ${action.trim()}`;
+      if (gmOverride.hasOverride && gmOverride.directives.length > 0) {
+        actionContent += `\n\n${gmOverride.directives.join('\n\n')}`;
+      }
+
       messages.push({
         role: 'user',
-        content: `${depthAnchor}\n\n[Действие]: ${action.trim()}`,
+        content: actionContent,
       });
     } else if (messages.length === 1) {
       messages.push({
@@ -1372,6 +1562,21 @@ ${userCustomPrompt ? `\n[ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ ИГ�
       parsedResponse.requires_roll.advantage_type = 'normal';
     }
 
+    if (!parsedResponse.required_rolls) {
+      parsedResponse.required_rolls = [];
+    }
+    if (parsedResponse.requires_roll?.needed && parsedResponse.required_rolls.length === 0) {
+      parsedResponse.required_rolls.push(parsedResponse.requires_roll as DmRollRequest);
+    }
+
+    if (!parsedResponse.unclaimed_loot) {
+      parsedResponse.unclaimed_loot = [];
+    }
+
+    if (!parsedResponse.private_narratives) {
+      parsedResponse.private_narratives = [];
+    }
+
     if (!parsedResponse.suggested_actions || !Array.isArray(parsedResponse.suggested_actions) || parsedResponse.suggested_actions.length === 0) {
       parsedResponse.suggested_actions = ['Осмотреться вокруг', 'Прислушаться', 'Двигаться дальше'];
     }
@@ -1384,6 +1589,9 @@ ${userCustomPrompt ? `\n[ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ ИГ�
         gold_change: 0,
         location_name: 'Текущая зона',
         time_passed_minutes: 15,
+        party_updates: {},
+        camp_stash_updates: { added_items: [], removed_items: [] },
+        p2p_transfers: [],
       };
     }
 

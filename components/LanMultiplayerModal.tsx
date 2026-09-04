@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { CharacterSheet, NetworkPlayer, GameDifficulty } from '@/types/dnd';
+import { CharacterSheet, NetworkPlayer, GameDifficulty, CoopSaveSession } from '@/types/dnd';
 import {
   Wifi,
   Users,
@@ -23,9 +23,12 @@ import {
   CheckCircle2,
   Clock,
   Skull,
+  BookOpen,
+  Package,
 } from 'lucide-react';
 import { CHARACTER_PRESETS } from '@/lib/dndRules';
 import { getAllSavedCharacters, SavedCharacterEntry } from '@/lib/storage';
+import { getCoopSessions } from '@/lib/coopStorage';
 import { DIFFICULTY_PROFILES, DIFFICULTY_ORDER } from '@/lib/difficultySettings';
 import { lanSocket } from '@/lib/multiplayerSocket';
 
@@ -43,10 +46,11 @@ interface LanMultiplayerModalProps {
   onDisconnect: () => void;
   onSelectCharacter?: (character: CharacterSheet) => void;
   onOpenCharacterCreator?: () => void;
-  onStartGame?: (difficulty: GameDifficulty) => void;
+  onStartGame?: (difficulty: GameDifficulty, campaignSession?: CoopSaveSession | null) => void;
   currentDifficulty?: GameDifficulty;
   onChangeDifficulty?: (difficulty: GameDifficulty) => void;
 }
+
 
 export const LanMultiplayerModal: React.FC<LanMultiplayerModalProps> = ({
   isOpen,
@@ -79,7 +83,12 @@ export const LanMultiplayerModal: React.FC<LanMultiplayerModalProps> = ({
   const [isLocalReady, setIsLocalReady] = useState(false);
   const [selectedDifficulty, setSelectedDifficulty] = useState<GameDifficulty>(currentDifficulty);
 
-  // Fetch host LAN IP from API
+  // Campaign source mode in lobby for host: 'new' | 'continue'
+  const [campaignMode, setCampaignMode] = useState<'new' | 'continue'>('new');
+  const [coopSessions, setCoopSessions] = useState<CoopSaveSession[]>([]);
+  const [selectedCampaign, setSelectedCampaign] = useState<CoopSaveSession | null>(null);
+
+  // Fetch host LAN IP from API and load saved campaigns
   useEffect(() => {
     if (isOpen) {
       fetch('/api/lan/info')
@@ -94,9 +103,15 @@ export const LanMultiplayerModal: React.FC<LanMultiplayerModalProps> = ({
         })
         .catch(() => {});
 
-      // Refresh saved characters list
+      // Refresh saved characters and coop campaigns
       const saved = getAllSavedCharacters();
       setSavedCharacters(saved);
+
+      const campaigns = getCoopSessions();
+      setCoopSessions(campaigns);
+      if (campaigns.length > 0 && !selectedCampaign) {
+        setSelectedCampaign(campaigns[0]);
+      }
 
       if (currentCharacter) {
         setSelectedCharacter(currentCharacter);
@@ -120,6 +135,11 @@ export const LanMultiplayerModal: React.FC<LanMultiplayerModalProps> = ({
   if (!isOpen) return null;
 
   const fullShareUrl = `http://${detectedLanIp}:${port}`;
+
+  // Ready Check calculation
+  const totalPlayers = players.length;
+  const readyCount = players.filter((p) => (p.isHost ? isLocalReady : p.isReady)).length;
+  const isAllReady = totalPlayers > 0 && players.every((p) => (p.isHost ? isLocalReady : p.isReady));
 
   function presetToSheet(p: any): CharacterSheet {
     return {
@@ -175,10 +195,14 @@ export const LanMultiplayerModal: React.FC<LanMultiplayerModalProps> = ({
   };
 
   const handleStartGameClick = () => {
+    if (!isAllReady && isHost) {
+      return;
+    }
+    const chosenCampaign = campaignMode === 'continue' ? selectedCampaign : null;
     if (onStartGame) {
-      onStartGame(selectedDifficulty);
+      onStartGame(selectedDifficulty, chosenCampaign);
     } else {
-      lanSocket.startGame(selectedDifficulty);
+      lanSocket.startGame(selectedDifficulty, chosenCampaign?.world);
       onClose();
     }
   };
@@ -189,6 +213,7 @@ export const LanMultiplayerModal: React.FC<LanMultiplayerModalProps> = ({
   };
 
   const diffProfile = DIFFICULTY_PROFILES[selectedDifficulty] || DIFFICULTY_PROFILES.standard;
+
 
   return (
     <div
@@ -496,51 +521,136 @@ export const LanMultiplayerModal: React.FC<LanMultiplayerModalProps> = ({
           {/* SECTION 4: PRE-GAME LOBBY ROOM (Active when connected) */}
           {isConnected && (
             <div className="space-y-4">
-              {/* Host Settings: Difficulty Selection */}
+              {/* Host Settings: Campaign Mode & Difficulty Selection */}
               {isHost ? (
-                <div className="bg-slate-950/80 p-4 rounded-2xl border border-slate-800 space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs uppercase font-bold text-amber-400 flex items-center gap-1.5">
-                      <Swords className="w-3.5 h-3.5" />
-                      <span>Сложность кампании для отряда:</span>
-                    </span>
-                    <span className="text-[10px] text-slate-400 font-semibold">
-                      Определяет лут, врагов и правила жизни
-                    </span>
+                <div className="bg-slate-950/80 p-4 rounded-2xl border border-slate-800 space-y-3.5">
+                  {/* Mode switch: New Campaign vs Continue Saved Campaign */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs uppercase font-bold text-amber-400 flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>Режим кампании:</span>
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-semibold">
+                        Начните с чистого листа или продолжите историю
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setCampaignMode('new')}
+                        className={`py-2 px-3 rounded-xl border text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
+                          campaignMode === 'new'
+                            ? 'bg-amber-500/20 border-amber-400 text-amber-300 ring-1 ring-amber-400/50 shadow-md'
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>✨ Новая кампания</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCampaignMode('continue')}
+                        className={`py-2 px-3 rounded-xl border text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
+                          campaignMode === 'continue'
+                            ? 'bg-amber-500/20 border-amber-400 text-amber-300 ring-1 ring-amber-400/50 shadow-md'
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        <FolderOpen className="w-3.5 h-3.5" />
+                        <span>📂 Продолжить ({coopSessions.length})</span>
+                      </button>
+                    </div>
+
+                    {/* Saved Campaigns Picker */}
+                    {campaignMode === 'continue' && (
+                      <div className="space-y-1.5 pt-1">
+                        <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                          Выберите сохраненную кампанию для отряда:
+                        </span>
+                        {coopSessions.length === 0 ? (
+                          <p className="text-xs text-slate-500 italic p-2 bg-slate-900/50 rounded-lg">
+                            Нет сохраненных кампаний. Начните новую или импортируйте файл в меню сохранений.
+                          </p>
+                        ) : (
+                          <div className="space-y-2 max-h-36 overflow-y-auto pr-1">
+                            {coopSessions.map((camp) => {
+                              const isSelected = selectedCampaign?.id === camp.id;
+                              return (
+                                <button
+                                  key={camp.id}
+                                  type="button"
+                                  onClick={() => setSelectedCampaign(camp)}
+                                  className={`w-full p-2.5 rounded-xl border text-left transition cursor-pointer flex items-center justify-between gap-2 ${
+                                    isSelected
+                                      ? 'bg-amber-500/20 border-amber-400 text-amber-200 ring-1 ring-amber-400/50 shadow-md'
+                                      : 'bg-slate-900/80 hover:bg-slate-900 border-slate-800 text-slate-300'
+                                  }`}
+                                >
+                                  <div className="min-w-0">
+                                    <div className="text-xs font-bold truncate text-slate-100">{camp.saveName}</div>
+                                    <div className="text-[10px] text-slate-400 truncate">
+                                      👥 {camp.partyPlayers?.map((p) => p.name || p.character?.name).join(', ')} • ⏳ {camp.inGameTime || `День ${camp.inGameDay || 1}`}
+                                    </div>
+                                  </div>
+                                  <div className="text-right text-[10px] text-amber-400 font-bold shrink-0">
+                                    {camp.camp_inventory?.length || 0} предм. в лагере
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                    {DIFFICULTY_ORDER.map((diffKey) => {
-                      const prof = DIFFICULTY_PROFILES[diffKey];
-                      const isSelected = selectedDifficulty === diffKey;
-                      return (
-                        <button
-                          key={diffKey}
-                          type="button"
-                          onClick={() => handleDifficultyChange(diffKey)}
-                          className={`p-2.5 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
-                            isSelected
-                              ? `${prof.borderClass} ring-1 ring-amber-400/50 shadow-md ${prof.bgLightClass}`
-                              : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between gap-1 mb-1">
-                            <span className="font-cinzel font-bold text-xs flex items-center gap-1.5 text-slate-100">
-                              <span>{prof.icon}</span>
-                              <span>{prof.name}</span>
-                            </span>
-                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
-                              isSelected ? 'bg-amber-400/20 text-amber-300 border-amber-400/40' : 'bg-slate-800 text-slate-400 border-slate-700'
-                            }`}>
-                              {prof.badge}
-                            </span>
-                          </div>
-                          <p className="text-[10px] text-slate-400 leading-tight">
-                            {prof.description}
-                          </p>
-                        </button>
-                      );
-                    })}
+                  {/* Difficulty Selection */}
+                  <div className="space-y-2 pt-1 border-t border-slate-800">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs uppercase font-bold text-amber-400 flex items-center gap-1.5">
+                        <Swords className="w-3.5 h-3.5" />
+                        <span>Сложность кампании для отряда:</span>
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-semibold">
+                        Определяет лут, врагов и правила жизни
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      {DIFFICULTY_ORDER.map((diffKey) => {
+                        const prof = DIFFICULTY_PROFILES[diffKey];
+                        const isSelected = selectedDifficulty === diffKey;
+                        return (
+                          <button
+                            key={diffKey}
+                            type="button"
+                            onClick={() => handleDifficultyChange(diffKey)}
+                            className={`p-2.5 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
+                              isSelected
+                                ? `${prof.borderClass} ring-1 ring-amber-400/50 shadow-md ${prof.bgLightClass}`
+                                : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-1 mb-1">
+                              <span className="font-cinzel font-bold text-xs flex items-center gap-1.5 text-slate-100">
+                                <span>{prof.icon}</span>
+                                <span>{prof.name}</span>
+                              </span>
+                              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
+                                isSelected ? 'bg-amber-400/20 text-amber-300 border-amber-400/40' : 'bg-slate-800 text-slate-400 border-slate-700'
+                              }`}>
+                                {prof.badge}
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-slate-400 leading-tight">
+                              {prof.description}
+                            </p>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -651,10 +761,10 @@ export const LanMultiplayerModal: React.FC<LanMultiplayerModalProps> = ({
               </div>
 
               {/* Ready check button for client / host */}
-              <div className="flex items-center justify-between gap-3 pt-2 border-t border-slate-800">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2 border-t border-slate-800">
                 <button
                   onClick={handleToggleReady}
-                  className={`px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer shadow-md ${
+                  className={`px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-md ${
                     isLocalReady
                       ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
                       : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
@@ -665,15 +775,32 @@ export const LanMultiplayerModal: React.FC<LanMultiplayerModalProps> = ({
                 </button>
 
                 {isHost && (
-                  <button
-                    onClick={handleStartGameClick}
-                    className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-slate-950 text-xs sm:text-sm font-cinzel font-extrabold flex items-center gap-2 shadow-lg shadow-amber-500/30 transition cursor-pointer"
-                  >
-                    <Swords className="w-4 h-4" />
-                    <span>⚔️ Начать приключение</span>
-                  </button>
+                  <div className="flex flex-col items-end gap-1">
+                    <button
+                      onClick={handleStartGameClick}
+                      disabled={!isAllReady}
+                      className={`w-full sm:w-auto px-6 py-2.5 rounded-xl text-xs sm:text-sm font-cinzel font-extrabold flex items-center justify-center gap-2 transition shadow-lg ${
+                        isAllReady
+                          ? 'bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-slate-950 shadow-amber-500/30 cursor-pointer'
+                          : 'bg-slate-800 text-slate-500 border border-slate-700/80 cursor-not-allowed'
+                      }`}
+                    >
+                      <Swords className="w-4 h-4" />
+                      <span>
+                        {isAllReady
+                          ? `⚔️ Начать приключение (${readyCount}/${totalPlayers} готовы)`
+                          : `⏳ Ожидание игроков (${readyCount} из ${totalPlayers} готовы)`}
+                      </span>
+                    </button>
+                    {!isAllReady && (
+                      <span className="text-[10px] text-amber-400/90 font-medium text-center sm:text-right">
+                        Все подключенные игроки должны нажать «Готов»
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
+
             </div>
           )}
         </div>

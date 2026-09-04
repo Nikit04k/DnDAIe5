@@ -17,10 +17,21 @@ import {
   parseItemQuantity,
   formatItemWithCount,
   getLevelFromXp,
+  canAdvanceLevel,
+  XP_TABLE,
   calculateHpGainOnLevelUp,
+  getInitialSpellSlots,
+  canCastSpell,
+  deductSpellSlot,
+  recoverSpellSlots,
+  getSpellCircle,
   isClassSpellcaster,
   CANTRIP_SUGGESTIONS_BY_CLASS,
   SPELL_SUGGESTIONS_BY_CLASS,
+  getAvailableClassFeatures,
+  DND_FEATS,
+  DND_CLASS_FEATURES,
+  DndFeatureDef,
 } from '@/lib/dndRules';
 import {
   Heart,
@@ -34,6 +45,7 @@ import {
   Plus,
   ChevronUp,
   Award,
+  Flame,
 } from 'lucide-react';
 import { playDiceRollSound, playHealSound } from '@/lib/diceSound';
 
@@ -215,14 +227,16 @@ export const CharacterSheetView: React.FC<CharacterSheetProps> = ({
   // Level Up form state
   const [newCantripInput, setNewCantripInput] = useState('');
   const [newSpellInput, setNewSpellInput] = useState('');
-
-  // Add spell/cantrip quick form
-  const [newSpellQuickInput, setNewSpellQuickInput] = useState('');
-  const [isAddingSpell, setIsAddingSpell] = useState(false);
+  const [asiMode, setAsiMode] = useState<'+2' | '+1+1' | 'feat'>('+2');
+  const [asiSingleStat, setAsiSingleStat] = useState<AbilityScoreKey>('str');
+  const [asiStat1, setAsiStat1] = useState<AbilityScoreKey>('str');
+  const [asiStat2, setAsiStat2] = useState<AbilityScoreKey>('con');
+  const [selectedFeatId, setSelectedFeatId] = useState<string>('feat_tough');
 
   // Experience and level calculation from 5e rules
   const xpInfo = getLevelFromXp(character.experience || 0);
   const canLevelUp = xpInfo.level > character.level;
+  const [spellErrorMsg, setSpellErrorMsg] = useState<string | null>(null);
 
   const stats = character.stats || { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };
   const strMod = getAbilityModifier(stats.str);
@@ -231,6 +245,14 @@ export const CharacterSheetView: React.FC<CharacterSheetProps> = ({
   const intMod = getAbilityModifier(stats.int);
   const wisMod = getAbilityModifier(stats.wis);
   const chaMod = getAbilityModifier(stats.cha);
+
+  // Active features list (custom or default by class & level)
+  const activeFeatures: Array<{ id?: string; name: string; description: string; source?: string }> =
+    character.customFeatures && character.customFeatures.length > 0
+      ? character.customFeatures
+      : (character.features && character.features.length > 0
+          ? character.features
+          : getAvailableClassFeatures(character.class, character.level));
 
   // Spellcasting modifier
   const isCaster = isClassSpellcaster(character.class);
@@ -427,32 +449,42 @@ export const CharacterSheetView: React.FC<CharacterSheetProps> = ({
     });
   };
 
-  // Cast Spell
-  const handleCastSpell = (spellName: string) => {
+  // Cast Spell (Cantrips are free, Leveled Spells consume spell slots)
+  const handleCastSpell = (spellName: string, isCantrip: boolean = false) => {
+    const effectiveChar: CharacterSheet = character.spellSlots
+      ? character
+      : { ...character, spellSlots: getInitialSpellSlots(character.class, character.level) };
+
+    const check = canCastSpell(effectiveChar, spellName, isCantrip);
+
+    if (!check.canCast) {
+      setSpellErrorMsg(check.reason || 'Нет свободных ячеек заклинаний! Требуется отдых.');
+      setTimeout(() => setSpellErrorMsg(null), 4000);
+      return;
+    }
+
+    setSpellErrorMsg(null);
     playDiceRollSound();
+
+    if (check.circle > 0) {
+      onUpdateCharacter((prev) => {
+        const base = prev.spellSlots ? prev : { ...prev, spellSlots: getInitialSpellSlots(prev.class, prev.level) };
+        return deductSpellSlot(base, check.circle);
+      });
+    }
+
     if (onItemUsed) {
-      const text = `✨ **Сотворение заклинания «${spellName}»**: DC спасброска: ${spellSaveDc}, Бонус атаки: +${spellAttackBonus}.`;
+      const circleText = check.circle === 0 ? 'Фокус (0 уровень)' : `Заклинание ${check.circle}-го круга (потрачена 1 ячейка)`;
+      const text = `✨ **Сотворение заклинания «${spellName}»** [${circleText}]: DC спасброска: ${spellSaveDc}, Бонус атаки: +${spellAttackBonus}.`;
       onItemUsed(spellName, text);
     }
-  };
-
-  // Add spell
-  const handleAddSpellSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newSpellQuickInput.trim()) return;
-    const val = newSpellQuickInput.trim();
-    onUpdateCharacter((prev) => ({
-      ...prev,
-      spells: [...(prev.spells || []), val],
-    }));
-    setNewSpellQuickInput('');
-    setIsAddingSpell(false);
   };
 
   // Level Up Confirmation
   const handleConfirmLevelUp = () => {
     const targetLevel = xpInfo.level;
     const hpGain = calculateHpGainOnLevelUp(character.class, stats.con);
+    const isAsiLevel = targetLevel % 4 === 0 || targetLevel === 19;
 
     onUpdateCharacter((prev) => {
       const nextSpells = [...(prev.spells || [])];
@@ -465,14 +497,57 @@ export const CharacterSheetView: React.FC<CharacterSheetProps> = ({
         nextCantrips.push(newCantripInput.trim());
       }
 
+      // Automatically add new class features unlocked for targetLevel
+      const allClassFeats = DND_CLASS_FEATURES[prev.class] || [];
+      const newClassFeats = allClassFeats.filter((f) => f.level === targetLevel);
+      const currentFeats = prev.customFeatures || prev.features || getAvailableClassFeatures(prev.class, prev.level);
+      let updatedFeats = [...currentFeats];
+
+      for (const feat of newClassFeats) {
+        if (!updatedFeats.some((f) => f.name.toLowerCase() === feat.name.toLowerCase())) {
+          updatedFeats.push(feat);
+        }
+      }
+
+      let updatedStats = { ...(prev.stats || { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 }) };
+
+      if (isAsiLevel) {
+        if (asiMode === '+2') {
+          updatedStats[asiSingleStat] = (updatedStats[asiSingleStat] || 10) + 2;
+          updatedFeats.push({
+            id: `asi_${Date.now()}`,
+            name: `Увеличение характеристик (${targetLevel} ур.)`,
+            description: `+2 к характеристике [${ABILITY_FULL_NAMES[asiSingleStat]?.ru || asiSingleStat}] (стало ${updatedStats[asiSingleStat]})`,
+            source: 'Развитие (ASI)',
+          });
+        } else if (asiMode === '+1+1') {
+          updatedStats[asiStat1] = (updatedStats[asiStat1] || 10) + 1;
+          updatedStats[asiStat2] = (updatedStats[asiStat2] || 10) + 1;
+          updatedFeats.push({
+            id: `asi_${Date.now()}`,
+            name: `Увеличение характеристик (${targetLevel} ур.)`,
+            description: `+1 к [${ABILITY_FULL_NAMES[asiStat1]?.ru || asiStat1}], +1 к [${ABILITY_FULL_NAMES[asiStat2]?.ru || asiStat2}]`,
+            source: 'Развитие (ASI)',
+          });
+        } else if (asiMode === 'feat') {
+          const featObj = DND_FEATS.find((f) => f.id === selectedFeatId);
+          if (featObj && !updatedFeats.some((f) => f.name.toLowerCase() === featObj.name.toLowerCase())) {
+            updatedFeats.push(featObj);
+          }
+        }
+      }
+
       return {
         ...prev,
         level: targetLevel,
         proficiencyBonus: xpInfo.proficiencyBonus,
         maxHp: prev.maxHp + hpGain,
         currentHp: prev.currentHp + hpGain,
+        stats: updatedStats,
         cantrips: nextCantrips,
         spells: nextSpells,
+        customFeatures: updatedFeats,
+        features: updatedFeats,
       };
     });
 
@@ -530,7 +605,7 @@ export const CharacterSheetView: React.FC<CharacterSheetProps> = ({
               <div className="flex items-center gap-3">
                 <span>Класс: <strong className="text-amber-900">{character.class}</strong></span>
                 <span>•</span>
-                <span className="bg-amber-900/10 px-2 py-0.5 rounded-full border border-amber-900/30">
+                <span className="bg-amber-900/10 px-2.5 py-0.5 rounded-full border border-amber-900/30 text-amber-950 font-cinzel font-bold text-[11px] sm:text-xs">
                   Уровень: <strong>{character.level}</strong>
                 </span>
               </div>
@@ -859,7 +934,7 @@ export const CharacterSheetView: React.FC<CharacterSheetProps> = ({
                 <div className="flex items-center justify-between border-b border-[#8c6a38]/30 pb-1">
                   <div className="flex items-center gap-1.5">
                     <Sparkles className="w-4 h-4 text-purple-800" />
-                    <span className="font-cinzel text-xs font-bold text-[#442813] uppercase">Заклинания</span>
+                    <span className="font-cinzel text-xs font-bold text-[#442813] uppercase">Заклинания и Магия</span>
                   </div>
                   <div className="flex items-center gap-2 text-[10px] font-bold text-amber-900">
                     <span>DC: {spellSaveDc}</span>
@@ -868,72 +943,98 @@ export const CharacterSheetView: React.FC<CharacterSheetProps> = ({
                   </div>
                 </div>
 
+                {/* Spell Slots Indicator / Tracker */}
+                {(() => {
+                  const slots = character.spellSlots || getInitialSpellSlots(character.class, character.level);
+                  if (!slots || Object.keys(slots).length === 0) return null;
+                  const entries = Object.entries(slots).filter(([k]) => !k.startsWith('level'));
+                  if (entries.length === 0) return null;
+
+                  return (
+                    <div className="bg-[#ebdcc4]/50 p-2 rounded-lg border border-[#8c6a38]/40 space-y-1">
+                      <div className="text-[10px] uppercase font-bold text-[#6d4d29] flex items-center justify-between">
+                        <span>🔮 Ячейки заклинаний:</span>
+                        <span className="text-[9px] text-[#7a5b35]">
+                          {['колдун', 'warlock'].includes(character.class.toLowerCase()) ? 'Восст.: Короткий отдых' : 'Восст.: Длинный отдых'}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 pt-0.5">
+                        {entries.map(([circle, slot]) => {
+                          if (!slot) return null;
+                          return (
+                            <div
+                              key={circle}
+                              className="flex items-center gap-1.5 bg-[#fbf6ea] px-2 py-0.5 rounded border border-[#8c6a38]/50 text-[10px]"
+                            >
+                              <span className="font-bold text-[#442813]">{circle} круг:</span>
+                              <div className="flex items-center gap-0.5">
+                                {Array.from({ length: slot.max }).map((_, idx) => (
+                                  <span
+                                    key={idx}
+                                    className={`inline-block w-2.5 h-2.5 rounded-full border ${
+                                      idx < slot.current
+                                        ? 'bg-purple-700 border-purple-900 shadow-xs'
+                                        : 'bg-stone-300 border-stone-400 opacity-60'
+                                    }`}
+                                    title={idx < slot.current ? 'Ячейка свободна' : 'Ячейка израсходована'}
+                                  />
+                                ))}
+                              </div>
+                              <span className="text-[#6d4d29] font-bold font-mono">
+                                ({slot.current}/{slot.max})
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Spell Error / Exhaustion Message */}
+                {spellErrorMsg && (
+                  <div className="p-2 rounded bg-red-950/80 border border-red-500/60 text-red-200 text-[11px] font-semibold animate-pulse flex items-center gap-1.5">
+                    <span>⚠️ {spellErrorMsg}</span>
+                  </div>
+                )}
+
                 {/* Cantrips and Spells Badges */}
                 <div className="space-y-1.5 pt-1">
-                  <div className="text-[10px] uppercase font-bold text-[#6d4d29]">Фокусы (0 уровень):</div>
+                  <div className="text-[10px] uppercase font-bold text-[#6d4d29] flex items-center justify-between">
+                    <span>Фокусы (0 уровень, без траты ячеек):</span>
+                    <span className="text-[9px] text-emerald-800 font-bold">∞ Бесплатно</span>
+                  </div>
                   <div className="flex flex-wrap gap-1.5">
                     {(character.cantrips && character.cantrips.length > 0 ? character.cantrips : ['Свет', 'Огненный снаряд']).map((cantrip, i) => (
                       <button
                         key={i}
                         type="button"
-                        onClick={() => handleCastSpell(cantrip)}
-                        className="px-2 py-1 rounded-md bg-[#ebdcc4] hover:bg-purple-200 border border-[#8c6a38]/50 text-xs font-semibold text-purple-950 transition cursor-pointer flex items-center gap-1"
-                        title="Сотворить фокус"
+                        onClick={() => handleCastSpell(cantrip, true)}
+                        className="px-2 py-1 rounded-md bg-[#ebdcc4] hover:bg-purple-200 border border-[#8c6a38]/50 text-xs font-semibold text-purple-950 transition cursor-pointer flex items-center gap-1 shadow-xs"
+                        title="Сотворить фокус (бесплатно)"
                       >
                         <span>✨ {cantrip}</span>
                       </button>
                     ))}
                   </div>
 
-                  <div className="text-[10px] uppercase font-bold text-[#6d4d29] pt-1">Заклинания:</div>
+                  <div className="text-[10px] uppercase font-bold text-[#6d4d29] pt-1 flex items-center justify-between">
+                    <span>Заклинания кругов (расходуют ячейки):</span>
+                    <span className="text-[9px] text-purple-900 font-bold">1 ячейка / каст</span>
+                  </div>
                   <div className="flex flex-wrap gap-1.5">
                     {(character.spells && character.spells.length > 0 ? character.spells : ['Волшебная стрела', 'Щит']).map((spell, i) => (
                       <button
                         key={i}
                         type="button"
-                        onClick={() => handleCastSpell(spell)}
-                        className="px-2 py-1 rounded-md bg-[#ebdcc4] hover:bg-amber-200 border border-[#8c6a38]/50 text-xs font-semibold text-[#2a1810] transition cursor-pointer flex items-center gap-1"
-                        title="Сотворить заклинание"
+                        onClick={() => handleCastSpell(spell, false)}
+                        className="px-2 py-1 rounded-md bg-[#ebdcc4] hover:bg-amber-200 border border-[#8c6a38]/50 text-xs font-semibold text-[#2a1810] transition cursor-pointer flex items-center gap-1 shadow-xs"
+                        title={`Сотворить «${spell}» (тратит 1 ячейку магии)`}
                       >
                         <span>📜 {spell}</span>
                       </button>
                     ))}
-                    <button
-                      type="button"
-                      onClick={() => setIsAddingSpell(true)}
-                      className="px-2 py-1 rounded-md bg-amber-600/20 hover:bg-amber-600/30 border border-dashed border-amber-800 text-[11px] font-bold text-amber-950 flex items-center gap-1"
-                    >
-                      <Plus className="w-3 h-3" />
-                      <span>Вписать заклинание</span>
-                    </button>
                   </div>
-
-                  {/* Add Spell Quick Input */}
-                  {isAddingSpell && (
-                    <form onSubmit={handleAddSpellSubmit} className="flex items-center gap-2 pt-2">
-                      <input
-                        type="text"
-                        value={newSpellQuickInput}
-                        onChange={(e) => setNewSpellQuickInput(e.target.value)}
-                        placeholder="Название нового заклинания..."
-                        className="flex-1 bg-[#fbf6ea] border border-[#8c6a38] rounded-lg px-2.5 py-1 text-xs text-[#2a1810] focus:outline-none"
-                        autoFocus
-                      />
-                      <button
-                        type="submit"
-                        className="px-3 py-1 bg-amber-800 hover:bg-amber-700 text-amber-100 text-xs font-bold rounded-lg"
-                      >
-                        Добавить
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setIsAddingSpell(false)}
-                        className="text-xs text-slate-500 hover:text-slate-800 px-1"
-                      >
-                        Отмена
-                      </button>
-                    </form>
-                  )}
                 </div>
               </div>
             )}
@@ -1071,18 +1172,46 @@ export const CharacterSheetView: React.FC<CharacterSheetProps> = ({
 
             {/* Features & Traits Card */}
             <div className="parchment-card p-3 space-y-2 text-xs">
-              <h4 className="font-cinzel text-xs font-bold text-[#442813] uppercase tracking-wider border-b border-[#8c6a38]/30 pb-1">
-                Умения и Особенности
-              </h4>
-              <div className="space-y-2 text-[11px] text-[#4a2e16]">
-                <div className="p-2 rounded bg-[#fbf6ea] border border-[#8c6a38]/30">
-                  <strong className="text-[#2a1810] block font-cinzel">Второе дыхание (Second Wind)</strong>
-                  <span>В свой ход можно восстановить 1d10 + уровень HP раз за короткий отдых.</span>
+              <div className="flex items-center justify-between border-b border-[#8c6a38]/30 pb-1">
+                <div className="flex items-center gap-1.5">
+                  <Flame className="w-4 h-4 text-amber-700" />
+                  <span className="font-cinzel text-xs font-bold text-[#442813] uppercase tracking-wider">
+                    Умения и Особенности
+                  </span>
                 </div>
-                <div className="p-2 rounded bg-[#fbf6ea] border border-[#8c6a38]/30">
-                  <strong className="text-[#2a1810] block font-cinzel">Всплеск действий (Action Surge)</strong>
-                  <span>Возможность совершить одно дополнительное действие в свой ход.</span>
-                </div>
+                <span className="text-[10px] font-bold text-amber-900 bg-amber-900/10 px-2 py-0.5 rounded border border-amber-900/30">
+                  {activeFeatures.length} умений
+                </span>
+              </div>
+
+              {/* Dynamic Features List */}
+              <div className="space-y-2 text-[11px] text-[#4a2e16] max-h-72 overflow-y-auto pr-1">
+                {activeFeatures.length === 0 ? (
+                  <div className="text-center py-3 text-xs text-[#7a5b35] italic bg-[#ebdcc4]/30 rounded-lg border border-dashed border-[#8c6a38]/40">
+                    Умения формируются при создании персонажа и повышении уровня.
+                  </div>
+                ) : (
+                  activeFeatures.map((feat, idx) => (
+                    <div
+                      key={feat.id || idx}
+                      className="p-2 rounded bg-[#fbf6ea] border border-[#8c6a38]/40 shadow-xs space-y-0.5"
+                    >
+                      <div className="flex items-start justify-between gap-1.5">
+                        <strong className="text-[#2a1810] font-cinzel font-bold block leading-tight">
+                          {feat.name}
+                        </strong>
+                        {feat.source && (
+                          <span className="inline-block text-[9px] font-bold px-1.5 py-0.2 bg-amber-900/10 text-amber-900 rounded border border-amber-800/30 shrink-0">
+                            {feat.source}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-[#4a2e16] leading-relaxed pt-0.5">
+                        {feat.description}
+                      </p>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           </div>
@@ -1137,18 +1266,19 @@ export const CharacterSheetView: React.FC<CharacterSheetProps> = ({
       </div>
 
       {/* =========================================================
-          5. LEVEL UP MODAL (5e RULES: HP INCREASE, NEW CANTRIP & SPELL)
+          5. LEVEL UP MODAL (D&D 5e: HP, ABILITIES, ASI/FEATS, SPELLS)
           ========================================================= */}
       {isLevelUpModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
-          <div className="parchment-card max-w-lg w-full p-6 space-y-4 shadow-2xl border-4 border-[#8c6a38] relative">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
+          <div className="parchment-card max-w-xl w-full p-4 sm:p-6 space-y-4 shadow-2xl border-4 border-[#8c6a38] relative max-h-[90vh] overflow-y-auto">
+            
             <div className="text-center space-y-1">
               <span className="text-[10px] uppercase font-bold text-amber-800 tracking-widest">D&D 5e • Повышение Уровня</span>
               <h2 className="font-cinzel text-2xl font-black text-[#2a1810]">
                 УРОВЕНЬ {xpInfo.level}!
               </h2>
               <p className="text-xs text-[#5c3c1e]">
-                Ваши приключения принесли плоды. Ваша сила и мастерство возросли.
+                Ваши приключения принесли плоды. Настройте новые силы и способности для уровня {xpInfo.level}.
               </p>
             </div>
 
@@ -1156,13 +1286,155 @@ export const CharacterSheetView: React.FC<CharacterSheetProps> = ({
             <div className="p-3 bg-[#fbf6ea] rounded-xl border border-[#8c6a38]/40 space-y-2 text-xs">
               <div className="flex items-center justify-between font-bold text-[#2a1810]">
                 <span>Прибавка к здоровью (HP):</span>
-                <span className="text-emerald-800">+{calculateHpGainOnLevelUp(character.class, stats.con)} HP</span>
+                <span className="text-emerald-800 font-extrabold">+{calculateHpGainOnLevelUp(character.class, stats.con)} HP</span>
               </div>
               <div className="flex items-center justify-between font-bold text-[#2a1810]">
                 <span>Бонус мастерства:</span>
-                <span className="text-amber-900">+{xpInfo.proficiencyBonus}</span>
+                <span className="text-amber-900 font-extrabold">+{xpInfo.proficiencyBonus}</span>
               </div>
             </div>
+
+            {/* Unlocked Class Features for this Level */}
+            {(() => {
+              const allClassFeats = DND_CLASS_FEATURES[character.class] || [];
+              const newlyUnlocked = allClassFeats.filter((f) => f.level === xpInfo.level);
+              if (newlyUnlocked.length === 0) return null;
+              return (
+                <div className="p-3 bg-amber-500/10 rounded-xl border border-amber-600/40 space-y-2 text-xs">
+                  <div className="font-cinzel font-bold text-amber-950 flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-amber-700" />
+                    <span>Новые способности класса ({xpInfo.level} ур.):</span>
+                  </div>
+                  {newlyUnlocked.map((feat) => (
+                    <div key={feat.id} className="p-2.5 bg-[#fbf6ea] rounded-lg border border-[#8c6a38]/40 space-y-0.5">
+                      <div className="flex items-center justify-between gap-1">
+                        <strong className="text-[#2a1810] font-cinzel block font-bold">{feat.name}</strong>
+                        <span className="text-[9px] px-1.5 py-0.2 bg-emerald-900/10 text-emerald-900 rounded font-bold border border-emerald-900/30">
+                          ✓ Будет добавлено
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-[#4a2e16] pt-0.5">{feat.description}</p>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
+            {/* ASI / Feat selection (on levels 4, 8, 12, 16, 19) */}
+            {(xpInfo.level % 4 === 0 || xpInfo.level === 19) && (
+              <div className="p-3 bg-purple-500/10 rounded-xl border border-purple-600/40 space-y-3 text-xs">
+                <div className="font-cinzel font-bold text-purple-950 flex items-center gap-1.5">
+                  <Award className="w-4 h-4 text-purple-800" />
+                  <span>Увеличение характеристик или Черта ({xpInfo.level} ур.):</span>
+                </div>
+
+                {/* Choice radio buttons */}
+                <div className="flex flex-wrap gap-2 bg-[#fbf6ea] p-2 rounded-lg border border-[#8c6a38]/30">
+                  <label className="flex items-center gap-1.5 cursor-pointer font-bold text-[#2a1810]">
+                    <input
+                      type="radio"
+                      name="lvlAsiMode"
+                      checked={asiMode === '+2'}
+                      onChange={() => setAsiMode('+2')}
+                      className="accent-amber-800"
+                    />
+                    <span>+2 к одной</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer font-bold text-[#2a1810]">
+                    <input
+                      type="radio"
+                      name="lvlAsiMode"
+                      checked={asiMode === '+1+1'}
+                      onChange={() => setAsiMode('+1+1')}
+                      className="accent-amber-800"
+                    />
+                    <span>+1 к двум</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer font-bold text-[#2a1810]">
+                    <input
+                      type="radio"
+                      name="lvlAsiMode"
+                      checked={asiMode === 'feat'}
+                      onChange={() => setAsiMode('feat')}
+                      className="accent-purple-800"
+                    />
+                    <span>Взять черту (Feat)</span>
+                  </label>
+                </div>
+
+                {/* Sub-inputs */}
+                {asiMode === '+2' && (
+                  <div className="space-y-1">
+                    <label className="block font-bold text-[#2a1810]">Характеристика (+2):</label>
+                    <select
+                      value={asiSingleStat}
+                      onChange={(e) => setAsiSingleStat(e.target.value as AbilityScoreKey)}
+                      className="w-full bg-[#fbf6ea] border border-[#8c6a38] rounded-lg p-1.5 text-xs text-[#2a1810] font-bold focus:outline-none"
+                    >
+                      {(Object.keys(ABILITY_FULL_NAMES) as AbilityScoreKey[]).map((k) => (
+                        <option key={k} value={k}>
+                          {ABILITY_FULL_NAMES[k]?.ru} ({k.toUpperCase()}): сейчас {stats[k]} → станет {stats[k] + 2}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {asiMode === '+1+1' && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block font-bold text-[#2a1810]">1-я (+1):</label>
+                      <select
+                        value={asiStat1}
+                        onChange={(e) => setAsiStat1(e.target.value as AbilityScoreKey)}
+                        className="w-full bg-[#fbf6ea] border border-[#8c6a38] rounded-lg p-1.5 text-xs text-[#2a1810] font-bold focus:outline-none"
+                      >
+                        {(Object.keys(ABILITY_FULL_NAMES) as AbilityScoreKey[]).map((k) => (
+                          <option key={k} value={k}>
+                            {ABILITY_FULL_NAMES[k]?.ru}: {stats[k]} → {stats[k] + 1}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block font-bold text-[#2a1810]">2-я (+1):</label>
+                      <select
+                        value={asiStat2}
+                        onChange={(e) => setAsiStat2(e.target.value as AbilityScoreKey)}
+                        className="w-full bg-[#fbf6ea] border border-[#8c6a38] rounded-lg p-1.5 text-xs text-[#2a1810] font-bold focus:outline-none"
+                      >
+                        {(Object.keys(ABILITY_FULL_NAMES) as AbilityScoreKey[]).map((k) => (
+                          <option key={k} value={k}>
+                            {ABILITY_FULL_NAMES[k]?.ru}: {stats[k]} → {stats[k] + 1}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )}
+
+                {asiMode === 'feat' && (
+                  <div className="space-y-1">
+                    <label className="block font-bold text-[#2a1810]">Выберите черту:</label>
+                    <select
+                      value={selectedFeatId}
+                      onChange={(e) => setSelectedFeatId(e.target.value)}
+                      className="w-full bg-[#fbf6ea] border border-[#8c6a38] rounded-lg p-1.5 text-xs text-[#2a1810] font-bold focus:outline-none"
+                    >
+                      {DND_FEATS.map((feat) => (
+                        <option key={feat.id} value={feat.id}>
+                          {feat.name}
+                        </option>
+                      ))}
+                    </select>
+                    {(() => {
+                      const sel = DND_FEATS.find((f) => f.id === selectedFeatId);
+                      return sel ? <p className="text-[10px] text-[#5c3c1e] italic pt-1">{sel.description}</p> : null;
+                    })()}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Spellcaster Additions (Cantrips & Spells) */}
             {isCaster && (
@@ -1228,21 +1500,25 @@ export const CharacterSheetView: React.FC<CharacterSheetProps> = ({
               <button
                 type="button"
                 onClick={() => setIsLevelUpModalOpen(false)}
-                className="px-3 py-1.5 rounded-xl border border-[#8c6a38] text-xs text-[#5c3c1e] hover:bg-[#ebdcc4]"
+                className="px-3.5 py-1.5 rounded-xl border border-[#8c6a38] text-xs text-[#5c3c1e] hover:bg-[#ebdcc4] cursor-pointer"
               >
                 Отложить
               </button>
               <button
                 type="button"
                 onClick={handleConfirmLevelUp}
-                className="px-5 py-2 bg-gradient-to-r from-amber-700 to-amber-600 hover:from-amber-600 hover:to-amber-500 text-amber-100 font-cinzel font-bold text-xs rounded-xl shadow-lg border border-amber-400 cursor-pointer transition"
+                className="px-5 py-2 bg-gradient-to-r from-amber-700 to-amber-600 hover:from-amber-600 hover:to-amber-500 text-amber-100 font-cinzel font-bold text-xs rounded-xl shadow-lg border border-amber-400 cursor-pointer transition flex items-center gap-1.5"
               >
-                Принять уровень {xpInfo.level}!
+                <Sparkles className="w-4 h-4" />
+                <span>Принять уровень {xpInfo.level}!</span>
               </button>
             </div>
+
           </div>
         </div>
       )}
     </div>
   );
 };
+
+

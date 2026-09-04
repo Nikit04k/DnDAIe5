@@ -67,6 +67,8 @@ export interface CharacterSheet {
   xpMultiplier?: number;     // Мультипликатор опыта: 0.5x, 1x, 1.5x, 2x
   cantrips?: string[];       // Фокусы (0 уровень магии)
   spells?: string[];         // Заклинания персонажа
+  features?: Array<{ id?: string; name: string; description: string; source?: string }>; // Классовые умения и особенности
+  customFeatures?: Array<{ id?: string; name: string; description: string; source?: string }>; // Настроенные игроком умения
   attacks?: Array<{ name: string; bonus: string; damage: string }>; // Оружие и атаки
   deathSaves?: {
     successes: number;
@@ -96,6 +98,7 @@ export interface CharacterSheet {
   damage_immunities?: string[];
   damage_vulnerabilities?: string[];
   position?: { x: number; y: number }; // 5-футовая сетка
+  tactical_position?: 'frontline' | 'backline' | 'stealth' | 'separated';
 }
 
 export type GameDifficulty = 'story' | 'standard' | 'hardcore';
@@ -110,7 +113,7 @@ export interface WorldSettings {
   xpMultiplier?: number;    // 0.5, 1, 1.5, 2
 }
 
-export type RollType = 'skill_check' | 'attack_roll' | 'saving_throw' | 'initiative' | 'ability_check';
+export type RollType = 'skill_check' | 'attack_roll' | 'saving_throw' | 'initiative' | 'ability_check' | 'death_save';
 
 export interface RollRequirement {
   needed: boolean;
@@ -122,18 +125,73 @@ export interface RollRequirement {
   dc?: number;
   reason?: string;
   advantage_type?: 'normal' | 'advantage' | 'disadvantage'; // Преимущество или помеха на бросок
+  is_group_check?: boolean;
+  assisted_by_player_id?: string; // ID игрока, оказавшего содействие (Help Action)
+}
+
+export interface DmRollRequest extends RollRequirement {
+  needed: boolean;
+  target_character_id: string;
+  target_character_name: string;
+  roll_type: 'skill_check' | 'saving_throw' | 'attack_roll' | 'death_save' | string;
+  ability?: 'STR' | 'DEX' | 'CON' | 'INT' | 'WIS' | 'CHA' | string;
+  skill?: string;
+  dc: number;
+  reason: string;
+  advantage_type?: 'normal' | 'advantage' | 'disadvantage';
+  is_group_check?: boolean;
+  assisted_by_player_id?: string; // ID игрока, оказавшего помощь (Help Action)
+}
+
+export interface CharacterStatePatch {
+  hp_change?: number;
+  gold_change?: number;
+  added_items?: string[];
+  removed_items?: string[];
+  spell_slots_used?: Record<string, number>;
+  spell_slots_recovered?: { all?: boolean; slots?: Record<string, number> };
+  conditions_added?: string[];
+  conditions_removed?: string[];
+  tactical_position?: 'frontline' | 'backline' | 'stealth' | 'separated';
+  [key: string]: any;
+}
+
+export interface DmStateUpdate {
+  location_name?: string;
+  time_passed_minutes: number;    // Строго целое число минут (минимальный шаг = 1 минута, никаких секунд)
+  new_time?: string;              // "HH:MM"
+  new_day?: number;               // Игровой день (начиная с 1)
+  party_updates?: Record<string, CharacterStatePatch>;
+  camp_stash_updates?: { added_items?: string[]; removed_items?: string[] };
+  p2p_transfers?: Array<{ from_player_id: string; to_player_id: string; item?: string; gold?: number }>;
+  hp_change?: number;
+  gold_change?: number;
+  added_items?: string[];
+  removed_items?: string[];
+  xp_change?: number;
+  spell_slots_used?: Record<string, number>;
+  spell_slots_recovered?: { all?: boolean; slots?: Record<string, number> };
+  conditions_added?: string[];
+  conditions_removed?: string[];
+  concentration_update?: { action: 'start' | 'maintain' | 'break'; spell_name?: string };
+  level_up_available?: { new_level: number; hit_die: string };
+  opportunity_attack_triggered?: boolean;
+  damage_details?: { amount: number; type: string };
 }
 
 export interface StateUpdate {
-  hp_change: number;         // Negative = damage, Positive = healing
-  added_items: string[];     // New items gained
-  removed_items: string[];   // Items spent/lost
-  gold_change: number;       // Change in gold (can be negative or positive)
+  hp_change?: number;         // Negative = damage, Positive = healing
+  added_items?: string[];     // New items gained
+  removed_items?: string[];   // Items spent/lost
+  gold_change?: number;       // Change in gold (can be negative or positive)
   xp_change?: number;        // Experience points awarded by DM
   location_name?: string;    // Current location description
   time_passed_minutes?: number; // In-game time passed in minutes
   new_time?: string;         // Explicit target time (e.g. "18:00", "День 1 • 18:00")
   new_day?: number;          // Explicit target day (e.g. 2)
+  party_updates?: Record<string, CharacterStatePatch>;
+  camp_stash_updates?: { added_items?: string[]; removed_items?: string[] };
+  p2p_transfers?: Array<{ from_player_id: string; to_player_id: string; item?: string; gold?: number }>;
   spell_slots_used?: Record<string, number>; // например: { "1": 1, "2": 0 }
   spell_slots_recovered?: { all?: boolean; slots?: Record<string, number> };
   conditions_added?: string[];   // например: ["Poisoned", "Prone", "Blinded"]
@@ -147,9 +205,12 @@ export interface StateUpdate {
 export interface DmResponse {
   narrative: string;
   thought?: string; // Neural network reasoning/thinking process
-  requires_roll: RollRequirement;
+  requires_roll: RollRequirement | DmRollRequest;
+  required_rolls?: DmRollRequest[]; // Мульти-броски текущего раунда
   suggested_actions: string[];
-  state_update: StateUpdate;
+  state_update: StateUpdate | DmStateUpdate;
+  private_narratives?: Array<{ target_player_id: string; text: string }>; // Скрытый текст только для адресата
+  unclaimed_loot?: Array<{ id: string; name: string; type?: string; count?: number }>; // Общий пул нераспределенной добычи
   active_combat?: {
     is_active: boolean;
     round: number;
@@ -215,10 +276,11 @@ export interface ChatMessage {
   senderRace?: string;
   senderColor?: string;
   rollResult?: DiceRollResult;
-  rollRequest?: RollRequirement;
+  rollRequest?: RollRequirement | DmRollRequest;
   isTargetedRollWaiting?: boolean;
   waitingPlayerName?: string;
-  stateUpdateApplied?: StateUpdate;
+  stateUpdateApplied?: StateUpdate | DmStateUpdate;
+  privateNarratives?: Array<{ target_player_id: string; text: string }>; // Скрытый нарратив (Whispers)
   isError?: boolean; // Error message indicator
   failedAction?: string; // Original action to retry
 }
@@ -330,6 +392,7 @@ export interface MultiplayerRoomState {
   isDmThinking: boolean;
   history: ChatMessage[];
   roundActions?: Record<string, PlayerRoundAction>;
+  partyCompanions?: PartyCompanion[];
 }
 
 export type WsClientMessage =
@@ -341,7 +404,19 @@ export type WsClientMessage =
   | { type: 'FORCE_DM_TURN' }
   | { type: 'UPDATE_STATE_HOST'; state: Partial<MultiplayerRoomState> }
   | { type: 'SET_READY'; isReady: boolean }
-  | { type: 'START_GAME'; difficulty?: GameDifficulty; worldSettings?: WorldSettings }
+  | {
+      type: 'START_GAME';
+      difficulty?: GameDifficulty;
+      worldSettings?: WorldSettings;
+      isNewCampaign?: boolean;
+      history?: ChatMessage[];
+      inGameDay?: number;
+      inGameMinutes?: number;
+      inGameTime?: string;
+      partyCompanions?: PartyCompanion[];
+      storySummary?: string;
+    }
+  | { type: 'SYNC_CHAT_HISTORY'; history: ChatMessage[] }
   | { type: 'UPDATE_LOBBY_SETTINGS'; difficulty?: GameDifficulty }
   | { type: 'PING'; timestamp: number };
 
@@ -351,7 +426,18 @@ export type WsServerMessage =
   | { type: 'PLAYER_LEFT'; playerId: string; playerName: string }
   | { type: 'PLAYER_UPDATED'; player: NetworkPlayer }
   | { type: 'PLAYER_READY_CHANGED'; playerId: string; isReady: boolean }
-  | { type: 'GAME_STARTED'; difficulty?: GameDifficulty; worldSettings?: WorldSettings }
+  | {
+      type: 'GAME_STARTED';
+      difficulty?: GameDifficulty;
+      worldSettings?: WorldSettings;
+      isNewCampaign?: boolean;
+      history?: ChatMessage[];
+      inGameDay?: number;
+      inGameMinutes?: number;
+      inGameTime?: string;
+      partyCompanions?: PartyCompanion[];
+      storySummary?: string;
+    }
   | { type: 'LOBBY_SETTINGS_UPDATED'; difficulty?: GameDifficulty }
   | { type: 'CHAT_MESSAGE'; message: ChatMessage }
   | { type: 'CHAT_HISTORY_SYNC'; history: ChatMessage[] }
@@ -361,7 +447,7 @@ export type WsServerMessage =
   | { type: 'FORCE_DM_TURN' }
   | { type: 'ROLL_REQUEST_BROADCAST'; pendingRoll: RollRequirement }
   | { type: 'ROLL_RESOLVED_BROADCAST'; rollMessage: ChatMessage; rollResult: DiceRollResult }
-  | { type: 'STATE_SYNC'; currentLocation?: string; inGameDay?: number; inGameMinutes?: number; inGameTime?: string; partyCompanions?: PartyCompanion[] }
+  | { type: 'STATE_SYNC'; currentLocation?: string; inGameDay?: number; inGameMinutes?: number; inGameTime?: string; partyCompanions?: PartyCompanion[]; history?: ChatMessage[] }
   | { type: 'PONG'; clientTimestamp: number; serverTimestamp: number }
   | { type: 'ERROR'; error: string };
 
@@ -386,5 +472,29 @@ export interface SaveSlot {
   characterAc: number;
   currentLocation: string;
   inGameTime: string;
+}
+
+export interface CoopSaveSession {
+  id: string;
+  saveName: string;
+  createdAt: number;
+  updatedAt: number;
+  world: WorldSettings;
+  partyPlayers: Array<{
+    id: string;
+    name: string;
+    character: CharacterSheet;
+    isHost?: boolean;
+    color?: string;
+  }>;
+  history: ChatMessage[];
+  storySummary: string;
+  inGameDay: number;
+  inGameMinutes: number;          // Минуты от полуночи (0–1439), старт по умолчанию: 480 (08:00)
+  inGameTime?: string;
+  partyCompanions?: PartyCompanion[];
+  journalEntries?: Array<{ id: string; title: string; text: string; type: string }>;
+  camp_inventory?: string[];      // Банк ресурсов лагеря / вьючной лошади
+  unclaimed_loot?: Array<{ id: string; name: string; type?: string; count?: number }>; // Пул нераспределенного лута
 }
 

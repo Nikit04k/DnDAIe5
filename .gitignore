@@ -33,3 +33,4 @@ tmp_audio/
 
 # application packaging
 /dist/
+/dist-test/

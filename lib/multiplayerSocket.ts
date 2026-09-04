@@ -6,7 +6,9 @@ import {
   DiceRollResult,
   MultiplayerRoomState,
   RollRequirement,
+  DmRollRequest,
   StateUpdate,
+  DmStateUpdate,
   WsClientMessage,
   WsServerMessage,
   GameDifficulty,
@@ -186,11 +188,31 @@ class MultiplayerSocketManager {
     });
   }
 
-  public startGame(difficulty?: GameDifficulty, worldSettings?: WorldSettings) {
+  public startGame(
+    difficulty?: GameDifficulty,
+    worldSettings?: WorldSettings,
+    extra?: {
+      isNewCampaign?: boolean;
+      history?: ChatMessage[];
+      inGameDay?: number;
+      inGameMinutes?: number;
+      inGameTime?: string;
+      partyCompanions?: any[];
+      storySummary?: string;
+    }
+  ) {
     this.send({
       type: 'START_GAME',
       difficulty,
       worldSettings,
+      ...extra,
+    });
+  }
+
+  public syncChatHistory(history: ChatMessage[]) {
+    this.send({
+      type: 'SYNC_CHAT_HISTORY',
+      history,
     });
   }
 
@@ -202,8 +224,8 @@ class MultiplayerSocketManager {
 
   public broadcastDmResponse(
     message: ChatMessage,
-    stateUpdate: StateUpdate,
-    pendingRoll: RollRequirement | null,
+    stateUpdate: StateUpdate | DmStateUpdate,
+    pendingRoll: RollRequirement | DmRollRequest | null,
     suggestedActions?: string[],
     nearbyNpcs?: any[]
   ) {
