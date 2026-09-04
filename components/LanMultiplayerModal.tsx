@@ -25,10 +25,11 @@ import {
   Skull,
   BookOpen,
   Package,
+  Trash2,
 } from 'lucide-react';
 import { CHARACTER_PRESETS } from '@/lib/dndRules';
 import { getAllSavedCharacters, SavedCharacterEntry } from '@/lib/storage';
-import { getCoopSessions } from '@/lib/coopStorage';
+import { getCoopSessions, deleteCoopSession } from '@/lib/coopStorage';
 import { DIFFICULTY_PROFILES, DIFFICULTY_ORDER } from '@/lib/difficultySettings';
 import { lanSocket } from '@/lib/multiplayerSocket';
 
@@ -578,26 +579,48 @@ export const LanMultiplayerModal: React.FC<LanMultiplayerModalProps> = ({
                             {coopSessions.map((camp) => {
                               const isSelected = selectedCampaign?.id === camp.id;
                               return (
-                                <button
+                                <div
                                   key={camp.id}
-                                  type="button"
-                                  onClick={() => setSelectedCampaign(camp)}
-                                  className={`w-full p-2.5 rounded-xl border text-left transition cursor-pointer flex items-center justify-between gap-2 ${
+                                  className={`w-full p-2.5 rounded-xl border text-left transition flex items-center justify-between gap-2 ${
                                     isSelected
                                       ? 'bg-amber-500/20 border-amber-400 text-amber-200 ring-1 ring-amber-400/50 shadow-md'
                                       : 'bg-slate-900/80 hover:bg-slate-900 border-slate-800 text-slate-300'
                                   }`}
                                 >
-                                  <div className="min-w-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedCampaign(camp)}
+                                    className="flex-1 min-w-0 text-left cursor-pointer"
+                                  >
                                     <div className="text-xs font-bold truncate text-slate-100">{camp.saveName}</div>
                                     <div className="text-[10px] text-slate-400 truncate">
                                       👥 {camp.partyPlayers?.map((p) => p.name || p.character?.name).join(', ')} • ⏳ {camp.inGameTime || `День ${camp.inGameDay || 1}`}
                                     </div>
+                                  </button>
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    <div className="text-right text-[10px] text-amber-400 font-bold hidden sm:block">
+                                      {camp.camp_inventory?.length || 0} предм.
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (confirm(`Удалить сохраненную кампанию "${camp.saveName}"?`)) {
+                                          deleteCoopSession(camp.id);
+                                          const updated = getCoopSessions();
+                                          setCoopSessions(updated);
+                                          if (selectedCampaign?.id === camp.id) {
+                                            setSelectedCampaign(updated[0] || null);
+                                          }
+                                        }
+                                      }}
+                                      className="p-1.5 rounded-lg bg-slate-950 hover:bg-red-950/80 border border-slate-800 hover:border-red-600/60 text-slate-400 hover:text-red-400 transition cursor-pointer"
+                                      title="Удалить кампанию"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
                                   </div>
-                                  <div className="text-right text-[10px] text-amber-400 font-bold shrink-0">
-                                    {camp.camp_inventory?.length || 0} предм. в лагере
-                                  </div>
-                                </button>
+                                </div>
                               );
                             })}
                           </div>

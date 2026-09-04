@@ -60,9 +60,6 @@ export function saveCoopSession(session: CoopSaveSession): boolean {
   }
 }
 
-/**
- * Удалить кооперативную сессию по ID
- */
 export function deleteCoopSession(id: string): boolean {
   if (typeof localStorage === 'undefined' || !id) return false;
   try {
@@ -72,6 +69,20 @@ export function deleteCoopSession(id: string): boolean {
     return true;
   } catch (err) {
     console.error('Failed to delete co-op session from localStorage:', err);
+    return false;
+  }
+}
+
+/**
+ * Очистить все кооперативные сессии
+ */
+export function clearAllCoopSessions(): boolean {
+  if (typeof localStorage === 'undefined') return false;
+  try {
+    localStorage.removeItem(COOP_STORAGE_KEY);
+    return true;
+  } catch (err) {
+    console.error('Failed to clear all co-op sessions:', err);
     return false;
   }
 }

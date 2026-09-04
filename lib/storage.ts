@@ -602,6 +602,11 @@ export function deleteSaveSlot(slotId: string): boolean {
   return next.length < slots.length;
 }
 
+export function clearAllSaveSlots(): void {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem(STORAGE_KEYS.SAVE_SLOTS);
+}
+
 export function exportSaveSlotToFile(slotId: string): void {
   const slots = getAllSaveSlots();
   const found = slots.find((s) => s.id === slotId);

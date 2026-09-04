@@ -7,6 +7,7 @@ import {
   saveCurrentGameToSlot,
   loadGameFromSlot,
   deleteSaveSlot,
+  clearAllSaveSlots,
   exportSaveSlotToFile,
   importSaveSlotFromFile,
 } from '@/lib/storage';
@@ -14,6 +15,7 @@ import {
   getCoopSessions,
   saveCoopSession,
   deleteCoopSession,
+  clearAllCoopSessions,
   exportCoopSessionToFile,
   importCoopSessionFromJson,
 } from '@/lib/coopStorage';
@@ -230,6 +232,24 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
       deleteCoopSession(sessionId);
       refreshData();
       showFeedback(`Кампания "${sessionName}" удалена`);
+    }
+  };
+
+  const handleClearAllSaves = () => {
+    const isCoop = saveCategory === 'coop';
+    const msg = isCoop
+      ? 'Вы уверены, что хотите удалить ВСЕ сохраненные кооперативные кампании? Это действие необратимо!'
+      : 'Вы уверены, что хотите удалить ВСЕ одиночные сохранения? Это действие необратимо!';
+
+    if (confirm(msg)) {
+      if (isCoop) {
+        clearAllCoopSessions();
+        showFeedback('Все кооперативные кампании удалены');
+      } else {
+        clearAllSaveSlots();
+        showFeedback('Все одиночные сохранения удалены');
+      }
+      refreshData();
     }
   };
 
@@ -459,11 +479,11 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
                 </div>
               </div>
 
-              {/* Overwrite Existing Solo Slots */}
+              {/* Overwrite or Delete Existing Solo Slots */}
               {saveCategory === 'solo' && (
                 <div className="space-y-2 pt-2">
                   <span className="text-[11px] uppercase font-bold text-slate-400 block">
-                    Или перезапишите существующий слот:
+                    Или перезапишите / удалите существующий слот:
                   </span>
                   {slots.length === 0 ? (
                     <p className="text-xs text-slate-500 italic">Слотов пока нет.</p>
@@ -487,16 +507,66 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
                               {s.characterName} ({s.characterClass} {s.characterLevel} ур.) • {s.currentLocation}
                             </p>
                           </div>
-                          <button
-                            onClick={() => handleCreateSave(s.id)}
-                            className="px-3 py-1.5 bg-slate-900 hover:bg-amber-500/20 border border-slate-700 hover:border-amber-400/50 text-slate-300 hover:text-amber-300 rounded-lg text-xs font-semibold transition cursor-pointer shrink-0"
-                          >
-                            Перезаписать
-                          </button>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              onClick={() => handleDeleteSlot(s.id, s.name)}
+                              className="px-2.5 py-1.5 bg-slate-900 hover:bg-red-950/80 border border-slate-800 hover:border-red-700/60 text-slate-400 hover:text-red-300 rounded-lg text-xs font-semibold transition cursor-pointer flex items-center gap-1"
+                              title="Удалить это сохранение"
+                            >
+                              <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                              <span className="hidden sm:inline">Удалить</span>
+                            </button>
+                            <button
+                              onClick={() => handleCreateSave(s.id)}
+                              className="px-3 py-1.5 bg-slate-900 hover:bg-amber-500/20 border border-slate-700 hover:border-amber-400/50 text-slate-300 hover:text-amber-300 rounded-lg text-xs font-semibold transition cursor-pointer"
+                            >
+                              Перезаписать
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Overwrite or Delete Existing Co-op Campaigns */}
+              {saveCategory === 'coop' && coopSessions.length > 0 && (
+                <div className="space-y-2 pt-2">
+                  <span className="text-[11px] uppercase font-bold text-slate-400 block">
+                    Или перезапишите / удалите существующую кампанию:
+                  </span>
+                  <div className="space-y-2">
+                    {coopSessions.map((c) => (
+                      <div
+                        key={c.id}
+                        className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 flex items-center justify-between gap-2 hover:border-slate-700 transition"
+                      >
+                        <div className="min-w-0">
+                          <span className="font-bold text-xs text-slate-200 truncate block">{c.saveName}</span>
+                          <p className="text-[10px] text-slate-400 truncate">
+                            👥 {c.partyPlayers?.map((p) => p.name || p.character?.name).join(', ')} • {c.inGameTime || `День ${c.inGameDay || 1}`}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            onClick={() => handleDeleteCoopSession(c.id, c.saveName)}
+                            className="px-2.5 py-1.5 bg-slate-900 hover:bg-red-950/80 border border-slate-800 hover:border-red-700/60 text-slate-400 hover:text-red-300 rounded-lg text-xs font-semibold transition cursor-pointer flex items-center gap-1"
+                            title="Удалить кампанию"
+                          >
+                            <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                            <span className="hidden sm:inline">Удалить</span>
+                          </button>
+                          <button
+                            onClick={() => handleCreateSave(c.id)}
+                            className="px-3 py-1.5 bg-slate-900 hover:bg-amber-500/20 border border-slate-700 hover:border-amber-400/50 text-slate-300 hover:text-amber-300 rounded-lg text-xs font-semibold transition cursor-pointer"
+                          >
+                            Перезаписать
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -620,10 +690,11 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
                               </button>
                               <button
                                 onClick={() => handleDeleteCoopSession(session.id, session.saveName)}
-                                className="p-2 rounded-xl bg-slate-900 hover:bg-red-950/60 border border-slate-800 hover:border-red-800/60 text-slate-400 hover:text-red-300 transition cursor-pointer"
+                                className="px-2.5 py-2 rounded-xl bg-slate-900 hover:bg-red-950/80 border border-slate-800 hover:border-red-700/60 text-slate-400 hover:text-red-300 transition cursor-pointer flex items-center gap-1.5 text-xs font-semibold shrink-0"
                                 title="Удалить эту кампанию"
                               >
-                                <Trash2 className="w-4 h-4" />
+                                <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                                <span className="hidden sm:inline">Удалить</span>
                               </button>
                               <button
                                 onClick={() => handleLoadCoopSession(session)}
@@ -755,10 +826,11 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
                             </button>
                             <button
                               onClick={() => handleDeleteSlot(slot.id, slot.name)}
-                              className="p-2 rounded-xl bg-slate-900 hover:bg-red-950/60 border border-slate-800 hover:border-red-800/60 text-slate-400 hover:text-red-300 transition cursor-pointer"
+                              className="px-2.5 py-2 rounded-xl bg-slate-900 hover:bg-red-950/80 border border-slate-800 hover:border-red-700/60 text-slate-400 hover:text-red-300 transition cursor-pointer flex items-center gap-1.5 text-xs font-semibold shrink-0"
                               title="Удалить это сохранение"
                             >
-                              <Trash2 className="w-4 h-4" />
+                              <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                              <span className="hidden sm:inline">Удалить</span>
                             </button>
                             <button
                               onClick={() => handleLoadSlot(slot.id)}
@@ -784,8 +856,19 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="p-4 border-t border-slate-800 bg-slate-950/80 flex items-center justify-between text-xs text-slate-500">
-          <span>Все сохранения хранятся локально в вашем браузере</span>
+        <div className="p-4 border-t border-slate-800 bg-slate-950/80 flex items-center justify-between text-xs text-slate-500 flex-wrap gap-2">
+          <div className="flex items-center gap-3">
+            <span>Все сохранения хранятся локально</span>
+            {((saveCategory === 'solo' && slots.length > 0) || (saveCategory === 'coop' && coopSessions.length > 0)) && (
+              <button
+                onClick={handleClearAllSaves}
+                className="text-red-400/80 hover:text-red-300 transition flex items-center gap-1 hover:underline cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Удалить все ({saveCategory === 'coop' ? 'кампании' : 'слоты'})</span>
+              </button>
+            )}
+          </div>
           <button
             onClick={onClose}
             className="px-4 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white transition cursor-pointer"
